@@ -1,18 +1,13 @@
 module Filtration
 
 export
-    # Fluid
-    Water, pressurize, profile_water, mix,
-    # Membrane
-    MembraneModule, MembraneElement, pristine_membrane,
     # Filtration
-    osmo_p, element_filtration, pump
+    osmo_p, pump,
+    element_filtration, module_filtration, vessel_filtration
 
-include("fluid.jl")
-include("membrane.jl")
-
-using .Fluid: Water, pressurize, profile_water, mix
-using .Membrane: MembraneElement, MembraneModule, profile_membrane, pristine_membrane
+using Unitful
+using ..ReverseOsmosis: Water, pressurize, profile_water, mix
+using ..ReverseOsmosis: MembraneElement, MembraneModule, PressureVessel, profile_membrane, pristine_membrane
 
 
 """
@@ -33,7 +28,7 @@ Power = (Feed volume⋅Aplied pressure)/(efficiency)
 """
 function pump(feed::Water, pressure_to_apply::Float64; efficiency::Float64=0.8)
     pressurized_water = pressurize(feed, pressure_to_apply)
-    power_consumption = (feed.Q / 3600) * pressure_to_apply / efficiency
+    power_consumption = (feed.Q / 3600) * pressure_to_apply / efficiency * u"W"
     return (pressurized_water, power_consumption)
 end
 
@@ -42,9 +37,8 @@ Model reverse osmosis of feed water on single membrane element.
 Returns brine & permeate and resistance increase (i.e. fouling effect).
 """
 function element_filtration(
-    feed::Water, element::MembraneElement;
-    K_setpoint=16.0, salt_rejection_setpoint=0.995, dt=nothing
-)
+    feed::Water, element::MembraneElement; dt=nothing
+)::Tuple{Water, Water, Float64}
     C_feed = feed.C
     Q_feed = feed.Q
     P_feed = feed.P
@@ -52,10 +46,10 @@ function element_filtration(
     # Membrane cross-section flux in m/s
     U_feed = Q_feed / element.width / element.height / 3600
 
-    K      = K_setpoint     # Spacer resistance coefficient
-    k_fp   = element.k_fp   # Fouling potential coefficient
+    K      = element.spacer_resistance      # Spacer resistance coefficient
+    k_fp   = element.k_fp                   # Fouling potential coefficient
+    reject = element.salt_rejection         # Membrane salt rejection rate
     μ      = 2.414e-5 * 10^(247.8 / (T_feed + 273.15 - 140)) # Water viscosity coefficient
-    reject = salt_rejection_setpoint
     
     local err::Float64          = 1.0
     local idx_iter::Int64       = 0
@@ -101,6 +95,54 @@ function element_filtration(
     brine    = Water(Q_b, T_feed, C_b, P_b)
 
     return (brine, permeate, ΔR_m)
+end
+
+function module_filtration(
+    feed::Water, membrane::MembraneModule; dt=nothing
+)::Tuple{Array{Water}, Array{Water}, Array{Float64}}
+    local next_feed::Water
+    local brine::Water
+    local permeate::Water
+    local ΔR_m::Float64
+
+    brines    = []
+    permeates = []
+    ΔR_ms     = []
+    
+    next_feed = feed
+    for element in membrane.elements_array
+        brine, permeate, ΔR_m = element_filtration(next_feed, element; dt=dt)
+        push!(brines, brine)
+        push!(permeates, permeate)
+        push!(ΔR_ms, ΔR_m)
+        next_feed = brine
+    end
+
+    return brines, permeates, ΔR_ms
+end
+
+function vessel_filtration(
+    feed::Water, vessel::PressureVessel; dt=nothing
+)
+    local next_feed::Water
+    local brines::Array{Water}
+    local permeates::Array{Water}
+    local ΔR_ms::Array{Float64}
+
+    brines_array    = []
+    permeates_array = []
+    ΔR_ms_array     = []
+
+    next_feed = feed
+    for membrane in vessel.modules_array
+        brines, permeates, ΔR_ms = module_filtration(next_feed, membrane; dt=dt)
+        push!(brines_array, brines)
+        push!(permeates_array, permeates)
+        push!(ΔR_ms_array, ΔR_ms)
+        next_feed = brines[end]
+    end
+
+    return brines_array, permeates_array, ΔR_ms_array
 end
 
 end
