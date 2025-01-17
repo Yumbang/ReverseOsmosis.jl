@@ -1,18 +1,3 @@
-module SinglePassReverseOsmosis
-
-export
-    SinglePassRO,
-    process_feed!
-
-using DataFrames, Unitful
-
-using ..ReverseOsmosis: Water, pressurize, profile_water, mix
-
-using ..ReverseOsmosis: MembraneElement, MembraneModule, PressureVessel,
-        profile_membrane, pristine_membrane, foul!
-
-using ..ReverseOsmosis: pump, vessel_filtration
-
 """
 Simple single-pass reverse osmosis process structure.
 Feed is pressurized by a high-pressure pump and filtered.
@@ -23,25 +8,32 @@ mutable struct SinglePassRO
 end
 
 # TODO: Create constructor function to take `Unitful` process configuration variables (membrane spec, module number, etc.) as input.
-# TODO: Create CLI interface to construct new process.
-
+# TODO: Reinforce docstrings to process_feed! function.
 """
 Process feed water with single-pass RO process given.
 Currently, dt is mandatory, and required to be `Unitful` time (e.g. dt = 1.0u"hr"). 
 """
 function process_feed!(
-    unpressurized_feed::Water, pressure_to_apply::Float64;
+    unpressurized_feed::Water, pressure_setpoint::Unitful.Pressure;
     process::SinglePassRO, dt::Unitful.Time, mode::Symbol=:forward, fouling::Bool=true, profile_process::Bool=false
 )
     @assert mode==:forward "Only forward mode is supported in single-pass RO process."
+
+    pressure_setpoint_Pa = Float64(uconvert(u"Pa", pressure_setpoint)/u"Pa")
+    if unpressurized_feed.P ≥ pressure_setpoint_Pa
+        @warn "Feed pressure is higher than pressure setpoint."
+        pressure_setpoint_Pa = unpressurized_feed.P
+    end
+
     local brines_array::Array{Array{Water}}
     local permeates_array::Array{Array{Water}}
     local ΔR_ms_array::Array{Array{Float64}}
     η_pump  = process.pump_efficiency
     dt_sec  = Float64(uconvert(u"s", dt)/u"s")
 
+    # Feed pressurization and power consumption eseimation. `power_consumption` is `Unitful` power.
+    pressure_to_apply = pressure_setpoint_Pa - unpressurized_feed.P
     pressurized_feed, power_consumption = pump(unpressurized_feed, pressure_to_apply; efficiency = η_pump)
-    energy_consumption = power_consumption * dt
 
     brines_array, permeates_array, ΔR_ms_array = vessel_filtration(
                                                     pressurized_feed, process.pressure_vessel;
@@ -63,7 +55,5 @@ function process_feed!(
         permeates_profile   = [nothing]
     end
 
-    return final_brine, final_permeate, brines_profile, permeates_profile, energy_consumption
+    return final_brine, final_permeate, brines_profile, permeates_profile, power_consumption
 end
-
-end # module SinglePassReverseOsmosis

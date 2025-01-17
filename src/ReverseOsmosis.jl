@@ -13,16 +13,21 @@ export
     osmo_p, pump,
     element_filtration, module_filtration, vessel_filtration,
     # Process models
-    SinglePassRO, process_feed!
+    SinglePassRO,
+    process_feed!
 
+# Basic elements
 include("fluid.jl")
 include("membrane.jl")
 
+# Filtration algorithm
 include("filtration.jl")
 using .Filtration
 
+# Reverse osmosis process implementations
 
-include("Process/SinglePass.jl")
-using .SinglePassReverseOsmosis
+# Single-pass reverse osmosis process
+include("Process/ROProcesse.jl")
+using .ReverseOsmosisProcesses
 
 end # module ReverseOsmosis
