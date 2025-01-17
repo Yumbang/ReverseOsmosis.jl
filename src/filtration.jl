@@ -27,6 +27,7 @@ Returns pressurized `Water` and consumed power [W] as following:
 Power = (Feed volume⋅Aplied pressure)/(efficiency)
 """
 function pump(feed::Water, pressure_to_apply::Float64; efficiency::Float64=0.8)
+    @assert (0.0 ≤ efficiency ≤ 1.0) "Pump efficiency must be between 0 and 1."
     pressurized_water = pressurize(feed, pressure_to_apply)
     power_consumption = (feed.Q / 3600) * pressure_to_apply / efficiency * u"W"
     return (pressurized_water, power_consumption)
@@ -73,7 +74,7 @@ function element_filtration(
         end
     end
 
-    @assert (v_w_guess > 0.0) "Cross membrane flux is negative (v_w_guess: $(v_w_guess)). Forward osmosis isn't currently supported."
+    @assert (v_w_guess > 0.0) "Permeate membrane flux is negative (v_w_guess: $(v_w_guess)). Forward osmosis isn't currently supported."
     @assert (u_guess > 0.0) "Brine flux is negative (u_guess: $(u_guess)). Backward flow isn't currently supported."
 
     Q_p = v_w_guess * element.width * element.dx * 3600 # Permeate flowrate [m³/h]
