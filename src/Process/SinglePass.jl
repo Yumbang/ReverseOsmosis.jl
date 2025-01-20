@@ -13,11 +13,11 @@ end
 Process feed water with single-pass RO process given.
 Currently, dt is mandatory, and required to be `Unitful` time (e.g. dt = 1.0u"hr"). 
 """
-function process_feed!(
+function ReverseOsmosisProcesses.process_feed!(
     unpressurized_feed::Water, pressure_setpoint::Unitful.Pressure;
-    process::SinglePassRO, dt::Unitful.Time, mode::Symbol=:forward, fouling::Bool=true, profile_process::Bool=false
+    process::SinglePassRO, dt::Unitful.Time, fouling::Bool=true, profile_process::Bool=false
 )
-    @assert mode==:forward "Only forward mode is supported in single-pass RO process."
+    @assert (mode == :forward) "Only forward mode is supported in single-pass RO process."
 
     pressure_setpoint_Pa = Float64(uconvert(u"Pa", pressure_setpoint)/u"Pa")
     if unpressurized_feed.P ≥ pressure_setpoint_Pa
@@ -48,8 +48,8 @@ function process_feed!(
     final_permeate  = mix(reduce(vcat, permeates_array); pressure=1e-5)
 
     if profile_process
-        brines_profile      = vcat([profile_water(brines) for (i, brines) in enumerate(brines_array)]...)
-        permeates_profile   = vcat([profile_water(permeates) for (i, permeates) in enumerate(permeates_array)]...)
+        brines_profile      = vcat([profile_water(brines) for brines in brines_array]...)
+        permeates_profile   = vcat([profile_water(permeates) for permeates in permeates_array]...)
     else
         brines_profile      = [nothing]
         permeates_profile   = [nothing]

@@ -13,7 +13,7 @@ mutable struct SemiBatchRO
     const high_pressure_pump_efficiency::Float64
     const circulation_pump_efficiency::Float64
     pressure_vessel::PressureVessel
-    circulated_brine::Union{Water,nothing}
+    circulated_brine::Union{Water,Nothing}
 end
 
 function junction(water1::Water, water2::Water; junction_loss::Float64)
@@ -29,11 +29,11 @@ end
 Process feed water with semi-batch RO process given.
 Currently, dt is mandatory, and required to be `Unitful` time (e.g. dt = 1.0u"minute"). 
 """
-function process_feed!(
+function ReverseOsmosisProcesses.process_feed!(
     unpressurized_feed::Water, pressure_setpoint::Unitful.Pressure;
     process::SemiBatchRO, dt::Unitful.Time=1u"minute", mode::Symbol=:CC, fouling::Bool=true, profile_process::Bool=false
 )
-    @assert mode ∈ [:CC, :purge] "Only closed-circuit or purge mode is supported in semi-batch RO process."
+    @assert (mode ∈ [:CC, :purge]) "Only closed-circuit or purge mode is supported in semi-batch RO process."
 
     pressure_setpoint_Pa = Floar64(uconvert(u"Pa", pressure_setpoint)/u"Pa")
     if unpressurized_feed.P ≥ pressure_setpoint_Pa

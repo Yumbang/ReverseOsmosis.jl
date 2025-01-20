@@ -27,7 +27,7 @@ using .Filtration
 # Reverse osmosis process implementations
 
 # Single-pass reverse osmosis process
-include("Process/ROProcesse.jl")
+include("Process/ROProcess.jl")
 using .ReverseOsmosisProcesses
 
 end # module ReverseOsmosis
