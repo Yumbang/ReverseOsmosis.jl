@@ -1,3 +1,18 @@
+module SinglePass
+
+export
+    SinglePassRO,
+    process_singlepass_RO!
+
+using DataFrames, Unitful
+
+using ...ReverseOsmosis: Water, pressurize, profile_water, mix
+
+using ...ReverseOsmosis: MembraneElement, MembraneModule, PressureVessel,
+        profile_membrane, pristine_membrane, foul!
+
+using ...ReverseOsmosis: pump, vessel_filtration
+
 """
 Simple single-pass reverse osmosis process structure.
 Feed is pressurized by a high-pressure pump and filtered.
@@ -13,9 +28,9 @@ end
 Process feed water with single-pass RO process given.
 Currently, dt is mandatory, and required to be `Unitful` time (e.g. dt = 1.0u"hr"). 
 """
-function ReverseOsmosisProcesses.process_feed!(
+function process_singlepass_RO!(
     unpressurized_feed::Water, pressure_setpoint::Unitful.Pressure;
-    process::SinglePassRO, dt::Unitful.Time, fouling::Bool=true, profile_process::Bool=false
+    process::SinglePassRO, dt::Unitful.Time, mode::Symbol=:forward, fouling::Bool=true, profile_process::Bool=false
 )
     @assert (mode == :forward) "Only forward mode is supported in single-pass RO process."
 
@@ -57,3 +72,5 @@ function ReverseOsmosisProcesses.process_feed!(
 
     return final_brine, final_permeate, brines_profile, permeates_profile, power_consumption
 end
+
+end # SinglePass

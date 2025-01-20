@@ -1,30 +1,15 @@
 module ReverseOsmosisProcesses
 
 export
-    SinglePassRO, SemiBatchRO,
-    process_feed!
-
-using DataFrames, Unitful
-
-using ..ReverseOsmosis: Water, pressurize, profile_water, mix
-
-using ..ReverseOsmosis: MembraneElement, MembraneModule, PressureVessel,
-        profile_membrane, pristine_membrane, foul!
-
-using ..ReverseOsmosis: pump, vessel_filtration
+    SinglePassRO, process_singlepass_RO!,
+    SemiBatchRO, process_semibatch_RO!
 
 # TODO: Create CLI interface to construct new process.
 
+include("SinglePass.jl")
+include("SemiBatch.jl")
 
-"""
-RO process codes redefine process_feed! function to implement their feed process mechanism.
-By process_feed! itself, receiving AbstractROProcess, will rise ImplementationError.
-"""
-function process_feed!()
-    error("ImplementationError: process_feed! not yet implemented.")
-end
-
-include("./SinglePass.jl")
-include("./SemiBatch.jl")
+using .SinglePass
+using .SemiBatch
 
 end # module ReverseOsmosisProcesses

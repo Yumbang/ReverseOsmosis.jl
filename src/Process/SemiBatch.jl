@@ -1,3 +1,18 @@
+module SemiBatch
+
+export
+    SemiBatchRO,
+    process_semibatch_RO!
+
+using DataFrames, Unitful
+
+using ...ReverseOsmosis: Water, pressurize, profile_water, mix
+
+using ...ReverseOsmosis: MembraneElement, MembraneModule, PressureVessel,
+        profile_membrane, pristine_membrane, foul!
+
+using ...ReverseOsmosis: pump, vessel_filtration
+
 """
 Simple semi-batch reverse osmosis process structure.
 Feed is pressurized by a high-pressure pump and brine is circulated with circulation pump.
@@ -29,7 +44,7 @@ end
 Process feed water with semi-batch RO process given.
 Currently, dt is mandatory, and required to be `Unitful` time (e.g. dt = 1.0u"minute"). 
 """
-function ReverseOsmosisProcesses.process_feed!(
+function process_semibatch_RO!(
     unpressurized_feed::Water, pressure_setpoint::Unitful.Pressure;
     process::SemiBatchRO, dt::Unitful.Time=1u"minute", mode::Symbol=:CC, fouling::Bool=true, profile_process::Bool=false
 )
@@ -102,3 +117,5 @@ function ReverseOsmosisProcesses.process_feed!(
 
     return final_brine, final_permeate, brines_profile, permeates_profile, power_consumption
 end
+
+end # SemiBatch

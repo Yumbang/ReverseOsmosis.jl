@@ -13,8 +13,8 @@ export
     osmo_p, pump,
     element_filtration, module_filtration, vessel_filtration,
     # Process models
-    SinglePassRO,
-    process_feed!
+    SinglePassRO, process_singlepass_RO!,
+    SemiBatchRO, process_semibatch_RO!
 
 # Basic elements
 include("fluid.jl")
