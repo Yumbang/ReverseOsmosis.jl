@@ -38,7 +38,7 @@ Model reverse osmosis of feed water on single membrane element.
 Returns brine & permeate and resistance increase (i.e. fouling effect).
 """
 function element_filtration(
-    feed::Water, element::MembraneElement; dt=nothing
+    feed::Water, element::MembraneElement; dt::Union{Float64, Nothing}=nothing
 )::Tuple{Water, Water, Float64}
     C_feed = feed.C
     Q_feed = feed.Q
@@ -63,8 +63,7 @@ function element_filtration(
     while err > 1e-6
         c_guess = c_cal
         osmo_p_guess = osmo_p(c_guess, T_feed)
-        @assert (osmo_p_guess - P_feed < 0.0) "Transmembrane pressure is negative (TMP: $(P_feed - osmo_p_guess)). Forward osmosis isn't currently supported."
-        v_w_guess    = (P_feed - osmo_p_guess) / element.R_m
+        v_w_guess    = max(P_feed - osmo_p_guess, 0.0) / element.R_m
         u_guess      = U_feed - v_w_guess * element.dx / element.height
         c_cal        = ((C_feed * U_feed * element.height) - ((1-reject)*C_feed) * (v_w_guess * element.dx)) / (u_guess * element.height)
         err          = abs((c_cal - c_guess) / c_cal)
@@ -73,9 +72,10 @@ function element_filtration(
             @error "Failed to converge. Iteration exceeded 100 times."
         end
     end
-
-    @assert (v_w_guess > 0.0) "Permeate membrane flux is negative (v_w_guess: $(v_w_guess)). Forward osmosis isn't currently supported."
-    @assert (u_guess > 0.0) "Brine flux is negative (u_guess: $(u_guess)). Backward flow isn't currently supported."
+    
+    # @assert (osmo_p_guess - P_feed < 0.0) "Transmembrane pressure is negative (TMP: $(P_feed - osmo_p_guess)). Forward osmosis isn't currently supported."
+    # @assert (v_w_guess > 0.0) "Permeate membrane flux is negative (v_w_guess: $(v_w_guess)). Forward osmosis isn't currently supported.\nFeed: $(feed)"
+    @assert (u_guess   > 0.0) "Brine flux is negative (u_guess: $(u_guess)). Backward flow isn't currently supported."
 
     Q_p = v_w_guess * element.width * element.dx * 3600 # Permeate flowrate [m³/h]
     Q_b = Q_feed - Q_p                                      # Brine flowrate    [m³/h]
@@ -99,7 +99,7 @@ function element_filtration(
 end
 
 function module_filtration(
-    feed::Water, membrane::MembraneModule; dt=nothing
+    feed::Water, membrane::MembraneModule; dt::Union{Float64, Nothing}=nothing
 )::Tuple{Array{Water}, Array{Water}, Array{Float64}}
     local next_feed::Water
     local brine::Water
@@ -123,7 +123,7 @@ function module_filtration(
 end
 
 function vessel_filtration(
-    feed::Water, vessel::PressureVessel; dt=nothing
+    feed::Water, vessel::PressureVessel; dt::Union{Float64, Nothing}=nothing
 )
     local next_feed::Water
     local brines::Array{Water}
