@@ -8,8 +8,10 @@ export
 
 include("SinglePass.jl")
 include("SemiBatch.jl")
+# include("SemiBatchODE.jl")
 
 using .SinglePass
 using .SemiBatch
+# using .SemiBatchODE
 
 end # module ReverseOsmosisProcesses
