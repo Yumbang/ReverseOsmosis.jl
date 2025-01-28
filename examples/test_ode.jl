@@ -119,7 +119,7 @@ function SBRO!(du, u, p, t)
     return nothing
 end
 
-pipe = Pipe(1.0)
+pipe = Pipe(5.0)
 sbro = SemiBatchRO(0.8, 0.8, pipe, deepcopy(pristine_vessel))
 feed = Water(100/84, 20.0, 300/1000, 1e5);
 logger = SBROLoggerElement(feed, feed, 0.0u"W", 0.0u"W", 0.0)
@@ -132,45 +132,53 @@ end
 saved_values = SavedValues(typeof(0.0), typeof(logger))
 cb = SavingCallback(save_func, saved_values)
 
-# u₀ = [feed.C, 500/84, 10e5]
-u₀ = [feed.C, 0.0, 0.0]
+u₀ = [feed.C, 500/84, 10e5]
+# u₀ = [feed.C, 0.0, 0.0]
 params = SBROParameters(
     300/1000, 20.0, 1e-5,
-    1000/84, 10e5, sbro, logger
+    1000/84, 12e5, sbro, logger
 )
 prob = ODEProblem(SBRO!, u₀, (0.0, 60.0), params)
 
-@benchmark sol = solve(prob, Tsit5(); callback=cb)
+sol = solve(prob, Tsit5(); callback=cb)
 
-saved_values.t
-brine_profile = profile_water(getfield.(saved_values.saveval, :brine))
-permeate_profile = profile_water(getfield.(saved_values.saveval, :permeate))
+# @benchmark solve($prob, $Tsit5(); callback=$cb)
+# @benchmark solve($prob, $DP5(); callback=$cb)
+
+
+time_profile = DataFrame(:time=>saved_values.t[2:end]*u"s")
+brine_profile = profile_water(getfield.(saved_values.saveval, :brine)[2:end])
+permeate_profile = profile_water(getfield.(saved_values.saveval, :permeate)[2:end])
 power_profile = DataFrame(
-    :time=>getfield.(saved_values.saveval, :time)[2:end],
     :power_feed=>getfield.(saved_values.saveval, :power_feed)[2:end],
     :power_circ=>getfield.(saved_values.saveval, :power_circ)[2:end]
 )
 
-plot(sol.t * u"s", brine_profile.Q)
-plot!(sol.t, [u[2] for u in sol.u], title="Flowrate")
-plot!(sol.t * u"s", permeate_profile.Q)
-plot!(sol.t * u"s", [1000/84 for _ in sol.t])
-plot!(sol.t * u"s", permeate_profile.Q+brine_profile.Q)
+sol.u[2:end]
 
-plot(power_profile.time, power_profile.power_feed)
-plot!(power_profile.time, power_profile.power_circ)
+plot(time_profile.time, brine_profile.Q, label="Brine Q", title="Flowrate")
+plot!(time_profile.time, [u[2] for u in sol.u[2:end]], label="Circulated brine Q")
+plot!(time_profile.time, permeate_profile.Q, label="Permeate Q")
+plot!(time_profile.time, [1000/84 for _ in time_profile.time], label="Merged feed Q")
+plot!(time_profile.time, permeate_profile.Q+brine_profile.Q, label="Brine + Permeate Q")
 
-plot(sol.t * u"s", brine_profile.C)
-plot!(sol.t, [u[1] for u in sol.u], title="Concentration")
+plot(time_profile.time, power_profile.power_feed, label="HPP power use")
+plot!(time_profile.time, power_profile.power_circ, label="Circulation pump power use")
+plot!(time_profile.time, power_profile.power_feed+power_profile.power_circ, label="Total power use")
+
+plot(time_profile.time, (power_profile.power_feed+power_profile.power_circ)./(permeate_profile.Q), label="SEC")
+
+plot(time_profile.time, [u[1]*u"kg/m^3" for u in sol.u[2:end]], label="Circulated brine C", title="Concentration")
+plot!(time_profile.time, brine_profile.C, label="Brine C")
 
 
-plot(sol.t * u"s", permeate_profile.C.*permeate_profile.Q)
+plot(time_profile.time, permeate_profile.C.*permeate_profile.Q)
 
-plot(sol.t * u"s", brine_profile.C.*brine_profile.Q)
+plot!(time_profile.time, brine_profile.C.*brine_profile.Q)
 
 
 sol.u
-sol.t
+plot(diff(sol.t), cumsum(diff(sol.t)))
 # Concentration
 plot(sol.t, [u[1] for u in sol.u], title="Concentration")
 # Flow rate
@@ -203,4 +211,3 @@ plot!(sol.t.*u"s", (adjusted_feed_profile.C .* adjusted_feed_profile.Q .* sol.t)
 plot(sixty_sec_final_feed_profile.time, sixty_sec_final_feed_profile.Q)
 
 @show sol.t;
-@show filtered_time = [log_element for log_element in logger if log_element.time in sol.t];
