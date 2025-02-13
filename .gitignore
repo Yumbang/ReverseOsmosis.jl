@@ -1,4 +1,7 @@
 *.ipynb
 *.png
 *.svg
+*.pdf
+*.xlsx
+*.csv
 .DS_Store
