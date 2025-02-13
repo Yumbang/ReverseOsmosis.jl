@@ -9,7 +9,7 @@ struct Water
 end
 
 """
-Mix two `Water` instances with `pressure` keyword argument
+Mix `Water` instances with `pressure` keyword argument
 Returns Mixed `Water` instance.
 """
 function mix(water1::Water, water2::Water; pressure::Float64=1e-5)
