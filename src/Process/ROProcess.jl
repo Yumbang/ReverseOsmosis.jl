@@ -7,9 +7,9 @@ export
 # TODO: Create CLI interface to construct new process.
 
 include("SinglePass.jl")
-# include("SemiBatchODE.jl")
+include("SemiBatchODE.jl")
 
 using .SinglePass
-# using .SemiBatch
+using .SemiBatch
 
 end # module ReverseOsmosisProcesses

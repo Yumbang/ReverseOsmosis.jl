@@ -50,10 +50,10 @@ Logger element for SBRO process.
 An element is passed as a parameter of ODE, and saved with callback function.
 """
 struct SBROLoggerElement
-    raw_feed::Union{Nothing, Water}
-    final_feed::Union{Nothing, Water}
-    raw_brine::Union{Nothing, Water}
-    permeate::Union{Nothing, Water}
+    raw_feed::Water
+    final_feed::Water
+    raw_brine::Water
+    permeate::Water
     ΔR_ms_array::Union{Nothing, Array{Array{Float64}}}
     power_feed::typeof(1.0u"W")
     power_circ::typeof(1.0u"W")
@@ -66,6 +66,9 @@ mutable struct SBROParameters
     feed_pressure::Float64
     flowrate_setpoint::Float64
     pressure_setpoint::Float64
+    τ₁::Float64
+    τ₂::Float64
+    τ₃::Float64
     process::SemiBatchRO
     logger::SBROLoggerElement
 end
@@ -94,11 +97,18 @@ u[2]: Pipe (circulated brine) flow rate
 u[3]: Pipe (circulated brine) pressure
 """
 function SBRO!(du, u, p, t)
+    # Raw feed info
     feed_concentration  = p.feed_concentration
     feed_temperature    = p.feed_temperature
     feed_pressure       = p.feed_pressure
+    # Setpoint parameters
     flowrate_setpoint   = p.flowrate_setpoint
     pressure_setpoint   = p.pressure_setpoint
+    # Time lagging constants (1.0 if only lagging due to HRT is considered)
+    τ₁                  = p.τ₁    
+    τ₂                  = p.τ₂
+    τ₃                  = p.τ₃    
+    # Target process
     sbro                = p.process
 
     # Unpressurized brine and feed
@@ -126,10 +136,9 @@ function SBRO!(du, u, p, t)
     )
     
     # ODE terms
-    # du[1] = (final_brine.C * final_brine.Q - u[1] * final_brine.Q) / sbro.pipe.volume
-    du[1] = (final_brine.C * final_brine.Q - u[1] * final_brine.Q) / sbro.pipe.volume
-    du[2] = final_brine.Q - u[2]
-    du[3] = final_brine.P - u[3]
+    du[1] = (final_brine.C - u[1]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₁ 
+    du[2] = (final_brine.Q - u[2]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₂ 
+    du[3] = (final_brine.P - u[3]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₃ 
 
     return nothing
 end
@@ -139,81 +148,85 @@ function sbro_save_func(u, t, integrator)
 end
 
 function process_semibatch_RO!(
-    feed_T::Float64, feed_C::Float64, feed_P::Float64, u₀,
-    flowrate_setpoint::Float64, pressure_setpoint::Float64;
-    process::SemiBatchRO, dt::Unitful.Time, mode::Symbol=:CC, fouling::Bool=true, profile_process::Bool=false
+    feed_T, feed_C, u₀,
+    flowrate_setpoint, pressure_setpoint;
+    process::SemiBatchRO, dt::Unitful.Time, mode::Symbol=:CC, fouling::Bool=true
 )
     @assert (mode == :CC) "Only CC mode is supported currently."
 
-    # # Unit conversion: Feed water quality
-    # feed_temperature_°C     = Float64(uconvert(u"°C", feed_T)/u"°C")
-    # feed_concentration_kgm3 = Float64(uconvert(u"kg/m^3", feed_C)/u"kg/m^3")
-    # feed_pressure_Pa        = Float64(uconvert(u"Pa", feed_P)/u"Pa")
-    
-    # # Unit conversion: Feed water quality
-    # flowrate_setpoint_m3h   = Float64(uconvert(u"m^3/hr", flowrate_setpoint)/u"m^3/hr")
-    # pressure_setpoint_Pa    = Float64(uconvert(u"Pa", pressure_setpoint)/u"Pa")
-    
-    # # Unit conversion: Feed water quality
-    # dt_sec                  = Float64(uconvert(u"s", dt)/u"s")
+    # Unit conversion: Feed water quality
+    feed_temperature_°C     = ustrip(uconvert(u"°C", feed_T))
+    feed_concentration_kgm3 = ustrip(uconvert(u"kg/m^3", feed_C))
     
     # Unit conversion: Feed water quality
-    feed_temperature_°C     = feed_T
-    feed_concentration_kgm3 = feed_C
-    feed_pressure_Pa        = feed_P
+    flowrate_setpoint_m3h   = ustrip(uconvert(u"m^3/hr", flowrate_setpoint))
+    pressure_setpoint_Pa    = ustrip(uconvert(u"Pa", pressure_setpoint))
     
     # Unit conversion: Feed water quality
-    flowrate_setpoint_m3h   = flowrate_setpoint
-    pressure_setpoint_Pa    = pressure_setpoint
-    
-    # Unit conversion: Feed water quality
-    dt_sec                  = Float64(uconvert(u"s", dt)/u"s")
+    dt_sec                  = ustrip(uconvert(u"s", dt))
 
-    logger        = SBROLoggerElement(nothing, nothing, nothing, nothing, nothing, 0.0u"W", 0.0u"W", 0.0)
-    logging_array = SavedValues(typeof(0.0), typeof(logger))
+    # Setup logging components and callback function
+    dummy_water   = Water(0.0, feed_temperature_°C, feed_concentration_kgm3, 1e5)
+    dummy_logger  = SBROLoggerElement(dummy_water, dummy_water, dummy_water, dummy_water, nothing, 0.0u"W", 0.0u"W", 0.0)
+    logging_array = SavedValues(typeof(0.0), typeof(dummy_logger))
     log_callback  = SavingCallback(sbro_save_func, logging_array)
 
+    # Setup parameters and initial condition
     if isnothing(u₀)
-        u₀ = [feed_concentration_kgm3, flowrate_setpoint_m3h/2, feed_pressure_Pa]
+        u₀ = [feed_concentration_kgm3, 0.0, 1e5] # Configure u₀ with feed concentration, zero flow and atmospheric pressure.
     end
 
     params₀ = SBROParameters(
-        feed_concentration_kgm3, feed_temperature_°C, feed_pressure_Pa,
-        flowrate_setpoint_m3h, pressure_setpoint_Pa, process, logger
+        feed_concentration_kgm3, feed_temperature_°C, 1e5,  # Feed info
+        flowrate_setpoint_m3h, pressure_setpoint_Pa,        # Process setpoints info
+        1.0, 1.0, 1.0,                                      # Lagging constants info
+        process,                                            # Target process info
+        dummy_logger                                        # Logger info
     )
     
+    # Define and solve SBRO ODE.
+    # DP5 solver turned out to be more efficient than Tsit5.
     sbro_ODE = ODEProblem(SBRO!, u₀, (0.0, dt_sec), params₀)
+    sbro_sol = solve(sbro_ODE, DP5(); callback=log_callback)
 
-    sbro_sol = solve(sbro_ODE, Tsit5(); callback=log_callback)
+    # Store the last solution as initial condition of the next timestep
+    next_u = deepcopy(sbro_sol.u[end])
 
-    time_profile        = DataFrame(:time=>logging_array.t[2:end]*u"s")
-    raw_feed_profile    = profile_water(getfield.(logging_array.saveval, :raw_feed)[2:end])
-    final_feed_profile  = profile_water(getfield.(logging_array.saveval, :final_feed)[2:end])
-    raw_brine_profile   = profile_water(getfield.(logging_array.saveval, :raw_brine)[2:end])
-    circulated_brine_profile = profile_water([Water(u[2], feed_T, u[1], u[3]) for u in sbro_sol.u[2:end]])
-    permeate_profile    = profile_water(getfield.(logging_array.saveval, :permeate)[2:end])
-    power_profile       = DataFrame(
+    
+    # Process the result into a dataframe
+    time_profile             = DataFrame(:time=>logging_array.t[2:end]*u"s")
+    raw_feed_profile         = profile_water(getfield.(logging_array.saveval, :raw_feed)[2:end])
+    final_feed_profile       = profile_water(getfield.(logging_array.saveval, :final_feed)[2:end])
+    raw_brine_profile        = profile_water(getfield.(logging_array.saveval, :raw_brine)[2:end])
+    circulated_brine_profile = profile_water([Water(u[2], feed_temperature_°C, u[1], u[3]) for u in sbro_sol.u[2:end]])
+    permeate_profile         = profile_water(getfield.(logging_array.saveval, :permeate)[2:end])
+    power_profile            = DataFrame(
         :HPP_power=>getfield.(logging_array.saveval, :power_feed)[2:end],
         :Circ_power=>getfield.(logging_array.saveval, :power_circ)[2:end]
     )
 
-    rename!((x -> "Raw_feed_"*x), raw_feed_profile)
-    rename!((x -> "Final_feed_"*x), final_feed_profile)
-    rename!((x -> "Raw_brine_"*x), raw_brine_profile)
+
+    rename!((x -> "Raw_feed_"*x),         raw_feed_profile)
+    rename!((x -> "Final_feed_"*x),       final_feed_profile)
+    rename!((x -> "Raw_brine_"*x),        raw_brine_profile)
     rename!((x -> "Circulated_brine_"*x), circulated_brine_profile)
-    rename!((x -> "Permeate_"*x), permeate_profile)
+    rename!((x -> "Permeate_"*x),         permeate_profile)
+    
     result_profile = hcat(
         time_profile, raw_feed_profile, final_feed_profile, 
         raw_brine_profile, circulated_brine_profile, permeate_profile, power_profile
     )
-    result_profile.time_diff = vcat(diff(result_profile.time), [0.0u"s"])
+    result_profile.time_diff = diff(logging_array.t)*u"s"
 
+    # Process fouling if fouling is true
     if fouling
-        ΔR_ms_array = logging_array.saveval.ΔR_ms_array
-        foul!(process.pressure_vessel, ΔR_ms_array)
+        ΔR_ms = getfield.(logging_array.saveval, :ΔR_ms_array)[2:end] .* ustrip.(result_profile.time_diff)
+        for ΔR_m ∈ ΔR_ms
+            foul!(process.pressure_vessel, ΔR_m)
+        end
     end
 
-    return result_profile, sbro_sol.u[end]
+    return result_profile, next_u
 end
 
 end # SemiBatchODE
