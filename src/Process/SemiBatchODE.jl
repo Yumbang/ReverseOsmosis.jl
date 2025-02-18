@@ -6,8 +6,8 @@ export
 
 using DataFrames, Unitful, Printf
 
-using DifferentialEquations
-using DiffEqCallbacks: SavedValues, SavingCallback
+using DifferentialEquations: ODEProblem, solve, DP5
+using DiffEqCallbacks:       SavedValues, SavingCallback
 
 using ...ReverseOsmosis: Water, pressurize, profile_water, mix
 
@@ -70,6 +70,7 @@ mutable struct SBROParameters
     τ₂::Float64
     τ₃::Float64
     process::SemiBatchRO
+    mode::Symbol
     logger::SBROLoggerElement
 end
 
@@ -88,7 +89,7 @@ end
 
 # TODO: Add flushing mode.
 """
-ODE statement function of semi-batch RO. (:CC mode)
+ODE statement function of semi-batch RO.
 Final feed means feed entering membrane vessel, after merged with circulated brine.
 Unpressurized feed is considered to be unchanging.
 
@@ -109,18 +110,28 @@ function SBRO!(du, u, p, t)
     τ₂                  = p.τ₂
     τ₃                  = p.τ₃    
     # Target process
+    mode                = p.mode
     sbro                = p.process
 
-    # Unpressurized brine and feed
-    unpressurized_brine = Water(u[2], feed_temperature, u[1], u[3])
-    unpressurized_feed  = Water(max(flowrate_setpoint-u[2], 0), feed_temperature, feed_concentration, feed_pressure)
-
-    # Pressurize feed and brine
-    pressurized_feed,  power_feed = pump(unpressurized_feed, pressure_setpoint - unpressurized_feed.P; efficiency=0.8)
-    pressurized_brine, power_circ = pump(unpressurized_brine, pressure_setpoint - unpressurized_brine.P; efficiency=0.8)
-
-    # Final feed after mixing
-    final_feed = junction(pressurized_brine, pressurized_feed; junction_loss=0.0)
+    if mode == :CC
+        # Unpressurized brine and feed
+        unpressurized_brine = Water(u[2], feed_temperature, u[1], u[3])
+        unpressurized_feed  = Water(max(flowrate_setpoint-u[2], 0), feed_temperature, feed_concentration, feed_pressure)
+        # Pressurize feed and brine
+        pressurized_feed,  power_feed = pump(unpressurized_feed, pressure_setpoint - unpressurized_feed.P; efficiency=0.8)
+        pressurized_brine, power_circ = pump(unpressurized_brine, pressure_setpoint - unpressurized_brine.P; efficiency=0.8)
+        # Final feed after mixing
+        final_feed = junction(pressurized_brine, pressurized_feed; junction_loss=0.0)
+    else
+        # Unpressurized brine and feed
+        unpressurized_brine = Water(u[2], feed_temperature, u[1], u[3])
+        unpressurized_feed  = Water(flowrate_setpoint, feed_temperature, feed_concentration, feed_pressure)
+        # Pressurize feed and (un)pressurized brine
+        pressurized_feed,  power_feed = pump(unpressurized_feed, pressure_setpoint - unpressurized_feed.P; efficiency=0.8)
+        pressurized_brine, power_circ = pump(unpressurized_brine, 0.0; efficiency=0.8) # No pressurization
+        # Final feed without mixing
+        final_feed = pressurized_feed
+    end
 
     # RO modeling
     brines_array, permeates_array, ΔR_ms_array = vessel_filtration(
@@ -128,14 +139,14 @@ function SBRO!(du, u, p, t)
     )
     
     final_brine    = brines_array[end][end]
-    final_permeate = mix(reduce(vcat, permeates_array); pressure=1e-5)
+    final_permeate = mix(reduce(vcat, permeates_array); pressure=1e5)
 
     p.logger = SBROLoggerElement(
         unpressurized_feed, final_feed, final_brine, final_permeate,
         ΔR_ms_array, power_feed, power_circ, t
     )
     
-    # ODE terms
+    # ODE terms:(Final brine info) /                (HRT)                    / (lagging const)
     du[1] = (final_brine.C - u[1]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₁ 
     du[2] = (final_brine.Q - u[2]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₂ 
     du[3] = (final_brine.P - u[3]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₃ 
@@ -152,7 +163,7 @@ function process_semibatch_RO!(
     flowrate_setpoint, pressure_setpoint;
     process::SemiBatchRO, dt::Unitful.Time, mode::Symbol=:CC, fouling::Bool=true
 )
-    @assert (mode == :CC) "Only CC mode is supported currently."
+    @assert (mode ∈ [:CC, :purge]) "Only CC mode and purging mode are supported."
 
     # Unit conversion: Feed water quality
     feed_temperature_°C     = ustrip(uconvert(u"°C", feed_T))
@@ -180,12 +191,12 @@ function process_semibatch_RO!(
         feed_concentration_kgm3, feed_temperature_°C, 1e5,  # Feed info
         flowrate_setpoint_m3h, pressure_setpoint_Pa,        # Process setpoints info
         1.0, 1.0, 1.0,                                      # Lagging constants info
-        process,                                            # Target process info
+        process, mode,                                      # Target process info
         dummy_logger                                        # Logger info
     )
     
     # Define and solve SBRO ODE.
-    # DP5 solver turned out to be more efficient than Tsit5.
+    # DP5 solver turned out to be more efficient compared to Tsit5.
     sbro_ODE = ODEProblem(SBRO!, u₀, (0.0, dt_sec), params₀)
     sbro_sol = solve(sbro_ODE, DP5(); callback=log_callback)
 
@@ -201,22 +212,24 @@ function process_semibatch_RO!(
     circulated_brine_profile = profile_water([Water(u[2], feed_temperature_°C, u[1], u[3]) for u in sbro_sol.u[2:end]])
     permeate_profile         = profile_water(getfield.(logging_array.saveval, :permeate)[2:end])
     power_profile            = DataFrame(
-        :HPP_power=>getfield.(logging_array.saveval, :power_feed)[2:end],
-        :Circ_power=>getfield.(logging_array.saveval, :power_circ)[2:end]
-    )
+                                    :HPP_power=> getfield.(logging_array.saveval, :power_feed)[2:end],
+                                    :Circ_power=>getfield.(logging_array.saveval, :power_circ)[2:end]
+                                )
 
-
+    # Rename dataframes before merging
     rename!((x -> "Raw_feed_"*x),         raw_feed_profile)
     rename!((x -> "Final_feed_"*x),       final_feed_profile)
     rename!((x -> "Raw_brine_"*x),        raw_brine_profile)
-    rename!((x -> "Circulated_brine_"*x), circulated_brine_profile)
+    rename!((x -> "Circulated_brine_"*x), circulated_brine_profile) # If mode is :purge, it is disposed brine's profile.
     rename!((x -> "Permeate_"*x),         permeate_profile)
     
+    # Merge dataframes into single result dataframe and add time difference (kinda little `dt`) column
     result_profile = hcat(
         time_profile, raw_feed_profile, final_feed_profile, 
         raw_brine_profile, circulated_brine_profile, permeate_profile, power_profile
     )
     result_profile.time_diff = diff(logging_array.t)*u"s"
+    result_profile.mode     .= mode
 
     # Process fouling if fouling is true
     if fouling
