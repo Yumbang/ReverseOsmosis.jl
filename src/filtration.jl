@@ -52,11 +52,11 @@ function element_filtration(
     reject = element.salt_rejection         # Membrane salt rejection rate
     μ      = 2.414e-5 * 10^(247.8 / (T_feed + 273.15 - 140)) # Water viscosity coefficient
     
-    local err::Float64          = 1.0
-    local idx_iter::Int64       = 0
-    local c_cal::Float64        = C_feed
-    local v_w_guess::Float64    = 0.0
-    local u_guess::Float64      = 0.0
+    local err         ::Float64 = 1.0
+    local idx_iter    ::Int64   = 0
+    local c_cal       ::Float64 = C_feed
+    local v_w_guess   ::Float64 = 0.0
+    local u_guess     ::Float64 = 0.0
     local osmo_p_guess::Float64 = 0.0
 
     # Main loop
@@ -78,13 +78,13 @@ function element_filtration(
     @assert (u_guess   > 0.0) "Brine flux is negative (u_guess: $(u_guess)). Backward flow isn't currently supported."
 
     Q_p = v_w_guess * element.width * element.dx * 3600 # Permeate flowrate [m³/h]
-    Q_b = Q_feed - Q_p                                      # Brine flowrate    [m³/h]
+    Q_b = Q_feed - Q_p                                  # Brine flowrate    [m³/h]
     C_p = (1-reject)*C_feed
     C_b = c_cal
     P_p = 1e-10
     P_b = P_feed - ((12 * K * μ * u_guess * element.dx) / element.height^2)
 
-    # If dt isn't given, return ΔR_m which is d(R_m)/dt that will constitute RO ODE problem.
+    # If dt isn't given, return ΔR_m which is d(R_m)/dt.
     # If dt is given, return ΔR_m which is actual increase of membrane resistance.
     if isnothing(dt)
         ΔR_m = k_fp * v_w_guess
