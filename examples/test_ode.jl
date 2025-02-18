@@ -145,11 +145,11 @@ function save_func(u, t, integrator)
 end
 
 
-
+@benchmark begin
 next_u = nothing
 result_log = []
 u_log = []
-for i ∈ 1:180
+for i ∈ 1:10
     saved_values = SavedValues(typeof(0.0), typeof(logger))
     cb = SavingCallback(save_func, saved_values)
 
@@ -168,13 +168,13 @@ for i ∈ 1:180
 
     # 순서대로 농도, 수온, (가압 전)압력, 유량 setpoint, 압력 setpoint, 대상 공정, logging용 변수
     params = SBROParameters(
-        1000/1000, flowrate_setpoint, 1e-5,
+        1000/1000, 20.0, 1e-5,
         feed_flowrate_setpoint, pressure_setpoint, 1.0, 1.0, 1.0, sbro, logger
     )
     
     prob = ODEProblem(SBRO!, u₀, (0.0, 10.0), params)
 
-    sol = solve(prob, Tsit5(); callback=cb)
+    sol = solve(prob, DP5(); callback=cb)
 
     # 마지막 시행값을 다음 시행 초기값으로 사용하기 위해 저장
     next_u = deepcopy(sol.u[end])
@@ -198,6 +198,7 @@ for i ∈ 1:180
     result_profile.time_diff = vcat(diff(result_profile.time), [0.0u"s"])
     push!(result_log, result_profile)
 
+end
 end
 # for문에서 축적된 결과값을 병합 후 처리
 total_result = vcat(result_log...)
