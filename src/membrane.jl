@@ -146,7 +146,7 @@ function foul!(membrane::MembraneModule, ΔR_ms::Array{Float64})
     return nothing
 end
 
-function foul!(vessel::PressureVessel, ΔR_ms_array::Array{Array{Float64}})
+function foul!(vessel::PressureVessel, ΔR_ms_array::Vector{Vector{Float64}})
     @assert length(vessel.modules_array) == length(ΔR_ms_array) "Size of membrane modules and ΔR_ms array do not match."
     for module_idx in range(1, length(vessel.modules_array))
         foul!(vessel.modules_array[module_idx], ΔR_ms_array[module_idx])
