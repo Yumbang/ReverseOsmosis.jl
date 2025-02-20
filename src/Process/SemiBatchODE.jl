@@ -87,7 +87,6 @@ function junction(circulated_brine::Water, feed::Water; junction_loss::Float64)
 end
 
 
-# TODO: Add flushing mode.
 """
 ODE statement function of semi-batch RO.
 Final feed means feed entering membrane vessel, after merged with circulated brine.
@@ -146,10 +145,21 @@ function SBRO!(du, u, p, t)
         ΔR_ms_array, power_feed, power_circ, t
     )
     
-    # ODE terms:(Final brine info) /                (HRT)                    / (lagging const)
+    # ODE terms:(Final brine info) /                (HRT)                    / (lagging const - 1.0 by default)
     du[1] = (final_brine.C - u[1]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₁ 
-    du[2] = (final_brine.Q - u[2]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₂ 
-    du[3] = (final_brine.P - u[3]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₃ 
+    # if mode == :CC
+    #     du[2] = (final_brine.Q - u[2]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₂ 
+    #     du[3] = (final_brine.P - u[3]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₃ 
+    # else
+    #     du[2] = 0.0
+    #     du[3] = 0.0
+    #     u[2]  = final_brine.Q
+    #     u[3]  = final_brine.P
+    # end
+    du[2] = 0.0
+    du[3] = 0.0
+    u[2]  = final_brine.Q
+    u[3]  = final_brine.P
 
     return nothing
 end
@@ -161,7 +171,7 @@ end
 function process_semibatch_RO!(
     feed_T, feed_C, u₀,
     flowrate_setpoint, pressure_setpoint;
-    process::SemiBatchRO, dt::Unitful.Time, mode::Symbol=:CC, fouling::Bool=true
+    process::SemiBatchRO, dt::Unitful.Time, mode::Symbol=:CC, fouling::Bool=true, τ::Tuple{Float64, Float64, Float64}=(1.0, 1.0, 1.0)
 )
     @assert (mode ∈ [:CC, :purge]) "Only CC mode and purging mode are supported."
 
@@ -190,7 +200,7 @@ function process_semibatch_RO!(
     params₀ = SBROParameters(
         feed_concentration_kgm3, feed_temperature_°C, 1e5,  # Feed info
         flowrate_setpoint_m3h, pressure_setpoint_Pa,        # Process setpoints info
-        1.0, 1.0, 1.0,                                      # Lagging constants info
+        τ...,                                               # Lagging constants info
         process, mode,                                      # Target process info
         dummy_logger                                        # Logger info
     )
