@@ -25,6 +25,7 @@ This struct—designed as brine circulation line—is necessary to properly mode
 """
 struct CirculationPipe
     volume::Float64       # [m³]
+    n_segments::Int64
 end
 
 """
@@ -92,9 +93,8 @@ ODE statement function of semi-batch RO.
 Final feed means feed entering membrane vessel, after merged with circulated brine.
 Unpressurized feed is considered to be unchanging.
 
-u[1]: Pipe (circulated brine) concentration
-u[2]: Pipe (circulated brine) flow rate
-u[3]: Pipe (circulated brine) pressure
+u[1], u[2] : Flowrate, pressure of circulated brine (equal to those of final brine, ∵ water is assumed to be non-compressible)
+u[2 + n]   : Concentration in n'th segment of pipe  (u[end] will be the circulated brine)
 """
 function SBRO!(du, u, p, t)
     # Raw feed info
@@ -104,18 +104,15 @@ function SBRO!(du, u, p, t)
     # Setpoint parameters
     flowrate_setpoint   = p.flowrate_setpoint
     pressure_setpoint   = p.pressure_setpoint
-    # Time lagging constants (1.0 if only lagging due to HRT is considered)
-    τ₁                  = p.τ₁    
-    τ₂                  = p.τ₂
-    τ₃                  = p.τ₃    
     # Target process
     mode                = p.mode
     sbro                = p.process
+    pipe_seg_volume     = sbro.pipe.volume / sbro.pipe.n_segments
 
     if mode == :CC
         # Unpressurized brine and feed
-        unpressurized_brine = Water(u[2], feed_temperature, u[1], u[3])
-        unpressurized_feed  = Water(max(flowrate_setpoint-u[2], 0), feed_temperature, feed_concentration, feed_pressure)
+        unpressurized_brine = Water(u[1], feed_temperature, u[end], u[2])
+        unpressurized_feed  = Water(max(flowrate_setpoint-u[1], 0), feed_temperature, feed_concentration, feed_pressure)
         # Pressurize feed and brine
         pressurized_feed,  power_feed = pump(unpressurized_feed, pressure_setpoint - unpressurized_feed.P; efficiency=0.8)
         pressurized_brine, power_circ = pump(unpressurized_brine, pressure_setpoint - unpressurized_brine.P; efficiency=0.8)
@@ -145,21 +142,17 @@ function SBRO!(du, u, p, t)
         ΔR_ms_array, power_feed, power_circ, t
     )
     
-    # ODE terms:(Final brine info) /                (HRT)                    / (lagging const - 1.0 by default)
-    du[1] = (final_brine.C - u[1]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₁ 
-    # if mode == :CC
-    #     du[2] = (final_brine.Q - u[2]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₂ 
-    #     du[3] = (final_brine.P - u[3]) / (sbro.pipe.volume/final_brine.Q * 3600) / τ₃ 
-    # else
-    #     du[2] = 0.0
-    #     du[3] = 0.0
-    #     u[2]  = final_brine.Q
-    #     u[3]  = final_brine.P
-    # end
+    # ODE terms
+    du[1] = 0.0
     du[2] = 0.0
-    du[3] = 0.0
-    u[2]  = final_brine.Q
-    u[3]  = final_brine.P
+    u[1]  = final_brine.Q
+    u[2]  = final_brine.P
+
+    du[3] = (final_brine.C - u[3]) / (pipe_seg_volume / u[1] * 3600.0)
+    
+    for n ∈ 2:sbro.pipe.n_segments
+        du[n+2] = (u[n+1] - u[n+2]) / (pipe_seg_volume / u[1] * 3600.0)
+    end
 
     return nothing
 end
@@ -194,7 +187,7 @@ function process_semibatch_RO!(
 
     # Setup parameters and initial condition
     if isnothing(u₀)
-        u₀ = [feed_concentration_kgm3, 0.0, 1e5] # Configure u₀ with feed concentration, zero flow and atmospheric pressure.
+        u₀ = [0.0, 1e5, fill(feed_concentration_kgm3, process.pipe.n_segments)...] # Configure u₀ with feed concentration, zero flow and atmospheric pressure.
     end
 
     params₀ = SBROParameters(
@@ -219,7 +212,7 @@ function process_semibatch_RO!(
     raw_feed_profile         = profile_water(getfield.(logging_array.saveval, :raw_feed)[2:end])
     final_feed_profile       = profile_water(getfield.(logging_array.saveval, :final_feed)[2:end])
     raw_brine_profile        = profile_water(getfield.(logging_array.saveval, :raw_brine)[2:end])
-    circulated_brine_profile = profile_water([Water(u[2], feed_temperature_°C, u[1], u[3]) for u in sbro_sol.u[2:end]])
+    circulated_brine_profile = profile_water([Water(u[1], feed_temperature_°C, u[end], u[2]) for u in sbro_sol.u[2:end]])
     permeate_profile         = profile_water(getfield.(logging_array.saveval, :permeate)[2:end])
     power_profile            = DataFrame(
                                     :HPP_power=> getfield.(logging_array.saveval, :power_feed)[2:end],

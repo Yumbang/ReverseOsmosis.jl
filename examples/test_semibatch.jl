@@ -11,8 +11,9 @@ begin
     using ProgressMeter
 end
 
-pipe_volume = 0.1
-pipe = CirculationPipe(pipe_volume)
+pipe_volume = 0.05
+n_segments  = 25
+pipe = CirculationPipe(pipe_volume, n_segments)
 membrane_spec = (100, 1.016, 7e-4, 37/1.016, 6.798858730956808e10, 0.6741807585817046e9, 16.0, 0.995)
 membrane = pristine_membrane(membrane_spec...);
 vessel = PressureVessel(7, membrane)
@@ -25,7 +26,7 @@ flowrate_setpoint = 20.0u"m^3/hr"
 pressure_setpoint_low  = 10.0u"bar"
 pressure_setpoint_high = 15.0u"bar"
 
-dt      = 10.0u"s"
+dt      = 1.0u"s"
 mode    = :CC
 fouling = true
 
@@ -35,13 +36,23 @@ CC_index       = uconvert(NoUnits, CC_duration / dt) |> Int64
 purge_duration = 1u"minute"
 purge_index    = uconvert(NoUnits, purge_duration / dt) |> Int64
 
+@benchmark begin
+    dt = 1.0u"s"
+    next_u = nothing
+    pressure = pressure_setpoint_high
+    result_df, next_u = process_semibatch_RO!(
+        feed_T, feed_C, next_u,
+        flowrate_setpoint, pressure;
+        process=sbro, dt=dt, mode=:CC, fouling=fouling, τ=(1.0, 1.0, 1.0)
+        )
+end
 next_u = nothing
 result_dfs = []
 @showprogress for cycle ∈ 1:10
     global next_u
     for i ∈ 1:CC_index
-        # pressure = pressure_setpoint_high*i/CC_index + pressure_setpoint_low*(CC_index-i)/CC_index
-        pressure = pressure_setpoint_high
+        pressure = pressure_setpoint_high*i/CC_index + pressure_setpoint_low*(CC_index-i)/CC_index
+        # pressure = pressure_setpoint_high
         result_df, next_u = process_semibatch_RO!(
             feed_T, feed_C, next_u,
             flowrate_setpoint, pressure;
@@ -191,7 +202,7 @@ begin
 end
 
 # Membrane resistance increase
--begin
+begin
     pristine_vessel_profile = profile_vessel(vessel)
     fouled_vessel_profile   = profile_vessel(sbro.pressure_vessel)
     resistance_plot = plot(cumsum(pristine_vessel_profile.dx), pristine_vessel_profile.R_m, label="Pristine membrane")
