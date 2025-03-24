@@ -6,6 +6,11 @@ struct Water
     T::Float64      # Temperature of water          [°C]
     C::Float64      # Concentration of water as TDS [kg/m³]
     P::Float64      # Pressure of water             [Pa]
+    m_avg::Float64  # Average ion molecular weight  [g/mol]
+end
+
+function Water(Q, T, C, P)
+    Water(Q, T, C, P, 58.44) # Assume most of the ions are NaCl
 end
 
 """
@@ -16,8 +21,8 @@ function mix(water1::Water, water2::Water; pressure::Float64=1e-5)
     flow            = water1.Q + water2.Q
     temperature     = (water1.T * water1.Q + water2.T * water2.Q) / flow
     concentration   = (water1.C * water1.Q + water2.C * water2.Q) / flow
-    pressure        = pressure
-    return Water(flow, temperature, concentration, pressure)
+    m_avg           = (water1.C * water1.Q + water2.C * water2.Q) / (water1.C * water1.Q / water1.m_avg + water2.C * water2.Q / water2.m_avg)
+    return Water(flow, temperature, concentration, pressure, m_avg)
 end
 
 function mix(water_array::Array{Water}; pressure::Float64)

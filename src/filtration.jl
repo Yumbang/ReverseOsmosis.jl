@@ -12,13 +12,20 @@ using ..ReverseOsmosis: MembraneElement, MembraneModule, PressureVessel, profile
 
 """
 Calculates osmotic pressure of water based on van't Hoff equation.
+
+concentration   : Mass concentration (TDS) as kg/m³
+m_avg           : Average ion molecular weight (if not given, assume most of the ions are NaCl)
 """
 function osmo_p(concentration::Float64, temperature::Float64)::Float64
-    return 2 / 58.44e3 * concentration * 1e3 * 8.3145e3 * (temperature + 273.15)
+    return 2 / 58.44 * concentration * 8.3145e3 * (temperature + 273.15) # Assuming all of the ions are Na⁺ ions
+end
+
+function osmo_p(concentration::Float64, temperature::Float64, m_avg::Float64)::Float64
+    return 2 / m_avg * concentration * 8.3145e3 * (temperature + 273.15) # Assuming all of the ions are Na⁺ ions
 end
 
 function osmo_p(water::Water)::Float64
-    osmo_p(water.C, water.T)
+    osmo_p(water.C, water.T, water.m_avg)
 end
 
 """
@@ -62,7 +69,7 @@ function element_filtration(
     # Main loop
     while err > 1e-6
         c_guess = c_cal
-        osmo_p_guess = osmo_p(c_guess, T_feed)
+        osmo_p_guess = osmo_p(c_guess, T_feed, feed.m_avg)
         v_w_guess    = max(P_feed - osmo_p_guess, 0.0) / element.R_m
         u_guess      = U_feed - v_w_guess * element.dx / element.height
         c_cal        = ((C_feed * U_feed * element.height) - ((1-reject)*C_feed) * (v_w_guess * element.dx)) / (u_guess * element.height)
