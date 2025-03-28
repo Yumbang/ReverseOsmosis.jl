@@ -51,6 +51,7 @@ function element_filtration(
     Q_feed = feed.Q
     P_feed = feed.P
     T_feed = feed.T
+    M_feed = feed.m_avg
     # Membrane cross-section flux in m/s
     U_feed = Q_feed / element.width / element.height / 3600
 
@@ -69,14 +70,14 @@ function element_filtration(
     # Main loop
     while err > 1e-6
         c_guess = c_cal
-        osmo_p_guess = osmo_p(c_guess, T_feed, feed.m_avg)
+        osmo_p_guess = osmo_p(c_guess, T_feed, M_feed)
         v_w_guess    = max(P_feed - osmo_p_guess, 0.0) / element.R_m
         u_guess      = U_feed - v_w_guess * element.dx / element.height
         c_cal        = ((C_feed * U_feed * element.height) - ((1-reject)*C_feed) * (v_w_guess * element.dx)) / (u_guess * element.height)
         err          = abs((c_cal - c_guess) / c_cal)
         idx_iter     += 1
         if idx_iter ≥ 100
-            @error "Failed to converge. Iteration exceeded 100 times."
+            @assert false "\nFailed to converge. Iteration exceeded 100 times. Feed water: $(feed) c_guess: $(c_guess) c_cal: $(c_cal)"
         end
     end
     

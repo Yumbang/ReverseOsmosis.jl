@@ -67,6 +67,7 @@ mutable struct SBROParameters
     feed_concentration::Float64
     feed_temperature::Float64
     feed_pressure::Float64
+    feed_molar_mass::Float64
     flowrate_setpoint::Float64
     pressure_setpoint::Float64
     process::SemiBatchRO
@@ -91,30 +92,34 @@ end
 ODE statement function of semi-batch RO.
 Final feed means feed entering membrane vessel, after merged with circulated brine.
 Unpressurized feed is considered to be unchanging.
+Fresh brine means brine produced right after RO membrane.
 
 u[1]: Final feed flowrate
 u[2]: Final feed pressure
-u[3]: Final feed concentration
-u[4]: Junction brine flowrate
-u[5]: Junction brine concentration
-u[6]   to u[6+N]   : Membrane -> Junction pipe segments concentration
-u[7+N] to u[7+N+M] : Junction -> Membrane pipe segments concentration
+u[3]: Fresh brine flowrate
+u[4]: Fresh brine pressure
+u[5]: Fresh brine concentration
+u[6]   to u[5+N]   : Membrane -> Junction pipe segments concentration
+u[6+N] to u[5+N+M] : Junction -> Membrane pipe segments concentration
 """
 function SBRO!(du, u, p, t)
     # Raw feed info
     feed_concentration  = p.feed_concentration
     feed_temperature    = p.feed_temperature
     feed_pressure       = p.feed_pressure
+    feed_molar_mass     = p.feed_molar_mass
     # Setpoint parameters
     flowrate_setpoint   = p.flowrate_setpoint
     pressure_setpoint   = p.pressure_setpoint
     # Target process
     mode                = p.mode
     sbro                = p.process
-    pipe_to_junction_seg_volume = sbro.pipe_to_junction.volume / sbro.pipe_to_junction.n_segments
-    pipe_to_membrane_seg_volume = sbro.pipe_to_membrane.volume / sbro.pipe_to_membrane.n_segments
+    N = sbro.pipe_to_junction.n_segments
+    M = sbro.pipe_to_membrane.n_segments
+    pipe_to_junction_seg_volume = sbro.pipe_to_junction.volume / N
+    pipe_to_membrane_seg_volume = sbro.pipe_to_membrane.volume / M
 
-    final_feed = Water(u[1], feed_temperature, u[end], u[2])
+    final_feed = Water(u[1], feed_temperature, u[end], u[2], feed_molar_mass)
     
 
     # RO modeling
@@ -128,29 +133,35 @@ function SBRO!(du, u, p, t)
     # ODE terms
     
     # Membrane to Junction modeling
-    # u[3]: Junction brine flowrate
-    # u[4]: Junction brine pressure
-    # u[5] to u[4+N] : Membrane -> Junction pipe segments concentration
+    # u[3]: Fresh brine flowrate
+    # u[4]: Fresh brine pressure
+    # u[5]: Fresh brine concentration
+    # u[6]   to u[5+N]   : Membrane -> Junction pipe segments concentration
     
     du[3] = 0.0
     du[4] = 0.0
     u[3]  = final_brine.Q
     u[4]  = final_brine.P
     if mode == :CC
-        du[5] = (final_brine.C - u[5])  / (pipe_to_junction_seg_volume / u[3] * 3600.0)
-        for n ∈ 2:sbro.pipe_to_junction.n_segments
-            du[n+4] = (u[n+3] - u[n+4]) / (pipe_to_junction_seg_volume / u[3] * 3600.0)
+        du[5] = 0.0
+        u[5]  = final_brine.C
+        for n ∈ 1:N
+            du[n+5] = (u[n+4] - u[n+5]) / (pipe_to_junction_seg_volume / u[3] * 3600.0)
         end
     else
-        du[5:4+sbro.pipe_to_junction.n_segments] .= 0.0
+        du[6:5+N] .= 0.0
     end
 
     
     # Junction to Membrane modeling
     # u[1]: Final feed flowrate
     # u[2]: Final feed pressure
-    # u[5+N] to u[4+N+M] : Junction -> Membrane pipe segments concentration
-    j_to_m_idx = 5+sbro.pipe_to_junction.n_segments
+    # u[3]: Fresh brine flowrate
+    # u[4]: Fresh brine pressure
+    # u[5]: Fresh brine concentration
+    # u[6]   to u[5+N]   : Membrane -> Junction pipe segments concentration
+    # u[6+N] to u[5+N+M] : Junction -> Membrane pipe segments concentration
+
     if mode == :CC
         fresh_feed_Q      = flowrate_setpoint - u[3]
         power_feed        = fresh_feed_Q / 3600 * (pressure_setpoint-feed_pressure) / sbro.high_pressure_pump_efficiency * u"W"
@@ -161,24 +172,22 @@ function SBRO!(du, u, p, t)
         power_circ        = 0.0u"W"
     end
 
-    unpressurized_feed = Water(fresh_feed_Q, feed_pressure, feed_concentration, feed_pressure)
-    junction_brine = Water(u[3], feed_temperature, u[j_to_m_idx-1], u[4])
+    fresh_feed  = Water(fresh_feed_Q, feed_temperature, feed_concentration, feed_pressure)
+    junction_brine      = Water(u[3], feed_temperature, u[5+N], u[4])
+    junction_mixed_feed = mix(fresh_feed, junction_brine; pressure=1e5)
     
     du[1] = 0.0
     du[2] = 0.0
     u[1]  = flowrate_setpoint
     u[2]  = pressure_setpoint
 
-
-    du[j_to_m_idx] = 0.0
-    u[j_to_m_idx]  = (fresh_feed_Q * feed_concentration + u[3] * u[j_to_m_idx-1]) / (fresh_feed_Q + u[3])
-
-    for m ∈ 2:sbro.pipe_to_membrane.n_segments
-        du[j_to_m_idx-1+m] = (u[j_to_m_idx-2+m] - u[j_to_m_idx-1+m]) / (pipe_to_membrane_seg_volume / u[1] * 3600.0)
+    du[6+N] = (junction_mixed_feed.C - u[6+N]) / (pipe_to_membrane_seg_volume / u[1] * 3600.0)
+    for m ∈ 1:M-1
+        du[6+N+m] = (u[5+N+m] - u[6+N+m]) / (pipe_to_membrane_seg_volume / u[1] * 3600.0)
     end
     
     p.logger = SBROLoggerElement(
-        unpressurized_feed, final_feed, final_brine, junction_brine, final_permeate,
+        fresh_feed, final_feed, final_brine, junction_brine, final_permeate,
         ΔR_ms_array, power_feed, power_circ, t
     )
 
@@ -190,7 +199,7 @@ function sbro_save_func(u, t, integrator)
 end
 
 function process_semibatch_RO!(
-    feed_T, feed_C, u₀,
+    feed_T, feed_C, feed_M, u₀,
     flowrate_setpoint, pressure_setpoint;
     process::SemiBatchRO, dt::Unitful.Time, mode::Symbol=:CC, fouling::Bool=true
 )
@@ -199,6 +208,7 @@ function process_semibatch_RO!(
     # Unit conversion: Feed water quality
     feed_temperature_°C     = ustrip(uconvert(u"°C", feed_T))
     feed_concentration_kgm3 = ustrip(uconvert(u"kg/m^3", feed_C))
+    feed_molar_mass_gmol    = ustrip(uconvert(u"g/mol", feed_M))
     
     # Unit conversion: Feed water quality
     flowrate_setpoint_m3h   = ustrip(uconvert(u"m^3/hr", flowrate_setpoint))
@@ -215,11 +225,11 @@ function process_semibatch_RO!(
 
     # Setup parameters and initial condition
     if isnothing(u₀)
-        u₀ = [flowrate_setpoint_m3h, 1e5, 0.0, 1e5, fill(feed_concentration_kgm3, process.pipe_to_junction.n_segments+process.pipe_to_membrane.n_segments)...] # Configure u₀ with feed concentration, zero flow and atmospheric pressure.
+        u₀ = [flowrate_setpoint_m3h, 1e5, 0.0, 1e5, fill(feed_concentration_kgm3, process.pipe_to_junction.n_segments+process.pipe_to_membrane.n_segments+1)...] # Configure u₀ with feed concentration, zero flow and atmospheric pressure.
     end
 
     params₀ = SBROParameters(
-        feed_concentration_kgm3, feed_temperature_°C, 1e5,  # Feed info
+        feed_concentration_kgm3, feed_temperature_°C, 1e5, feed_molar_mass_gmol,  # Feed info
         flowrate_setpoint_m3h, pressure_setpoint_Pa,        # Process setpoints info
         process, mode,                                      # Target process info
         dummy_logger                                        # Logger info
