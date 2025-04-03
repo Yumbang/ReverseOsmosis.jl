@@ -60,6 +60,8 @@ struct SBROLoggerElement
     ΔR_ms_array::Union{Nothing, Array{Array{Float64}}}
     power_feed::typeof(1.0u"W")
     power_circ::typeof(1.0u"W")
+    u::Union{Nothing, Vector{Float64}}
+    du::Union{Nothing, Vector{Float64}}
     time::Float64
 end
 
@@ -68,6 +70,7 @@ mutable struct SBROParameters
     feed_temperature::Float64
     feed_pressure::Float64
     feed_molar_mass::Float64
+    brine_molar_mass::Float64
     flowrate_setpoint::Float64
     pressure_setpoint::Float64
     process::SemiBatchRO
@@ -101,6 +104,7 @@ u[4]: Fresh brine pressure
 u[5]: Fresh brine concentration
 u[6]   to u[5+N]   : Membrane -> Junction pipe segments concentration
 u[6+N] to u[5+N+M] : Junction -> Membrane pipe segments concentration
+u[5+N+M+1] : Final feed average molar mass
 """
 function SBRO!(du, u, p, t)
     # Raw feed info
@@ -108,6 +112,7 @@ function SBRO!(du, u, p, t)
     feed_temperature    = p.feed_temperature
     feed_pressure       = p.feed_pressure
     feed_molar_mass     = p.feed_molar_mass
+    brine_molar_mass    = p.brine_molar_mass
     # Setpoint parameters
     flowrate_setpoint   = p.flowrate_setpoint
     pressure_setpoint   = p.pressure_setpoint
@@ -119,7 +124,7 @@ function SBRO!(du, u, p, t)
     pipe_to_junction_seg_volume = sbro.pipe_to_junction.volume / N
     pipe_to_membrane_seg_volume = sbro.pipe_to_membrane.volume / M
 
-    final_feed = Water(u[1], feed_temperature, u[end], u[2], feed_molar_mass)
+    final_feed = Water(u[1], feed_temperature, u[5+N+M], u[2], u[5+N+M+1])
     
 
     # RO modeling
@@ -127,8 +132,12 @@ function SBRO!(du, u, p, t)
         final_feed, sbro.pressure_vessel; dt=nothing
     )
     
-    final_brine    = brines_array[end][end]
-    final_permeate = mix(reduce(vcat, permeates_array); pressure=1e5)
+    # fake_final_brine = brines_array[end][end]
+    # final_brine      = Water(
+    #     fake_final_brine.Q, fake_final_brine.T, fake_final_brine.C, fake_final_brine.P, brine_molar_mass
+    # )
+    final_brine      = brines_array[end][end]
+    final_permeate   = mix(reduce(vcat, permeates_array); pressure=1e5)
 
     # ODE terms
     
@@ -145,6 +154,7 @@ function SBRO!(du, u, p, t)
     if mode == :CC
         du[5] = 0.0
         u[5]  = final_brine.C
+        # du[5] = (final_brine.C - u[5]) / (pipe_to_junction_seg_volume / u[3] * 3600.0)
         for n ∈ 1:N
             du[n+5] = (u[n+4] - u[n+5]) / (pipe_to_junction_seg_volume / u[3] * 3600.0)
         end
@@ -164,22 +174,26 @@ function SBRO!(du, u, p, t)
 
     if mode == :CC
         fresh_feed_Q      = flowrate_setpoint - u[3]
+        junction_brine    = Water(u[3], feed_temperature, u[5+N], u[4], brine_molar_mass)
         power_feed        = fresh_feed_Q / 3600 * (pressure_setpoint-feed_pressure) / sbro.high_pressure_pump_efficiency * u"W"
         power_circ        = u[3]         / 3600 * (pressure_setpoint - u[4])        / sbro.circulation_pump_efficiency   * u"W"
     else
         fresh_feed_Q      = flowrate_setpoint
+        junction_brine    = Water(0.0,  feed_temperature, u[5+N], u[4], brine_molar_mass)
+        # junction_brine    = Water(u[3],  feed_temperature, u[5+N], u[4], feed_molar_mass)
         power_feed        = fresh_feed_Q / 3600 * (pressure_setpoint-feed_pressure) / sbro.high_pressure_pump_efficiency * u"W"
         power_circ        = 0.0u"W"
     end
 
-    fresh_feed  = Water(fresh_feed_Q, feed_temperature, feed_concentration, feed_pressure)
-    junction_brine      = Water(u[3], feed_temperature, u[5+N], u[4])
-    junction_mixed_feed = mix(fresh_feed, junction_brine; pressure=1e5)
+    fresh_feed          = Water(fresh_feed_Q, feed_temperature, feed_concentration, feed_pressure, feed_molar_mass)
+    junction_mixed_feed = mix(fresh_feed, junction_brine; pressure=pressure_setpoint)
     
     du[1] = 0.0
     du[2] = 0.0
+    du[5+N+M+1] = 0.0
     u[1]  = flowrate_setpoint
     u[2]  = pressure_setpoint
+    u[5+N+M+1] = junction_mixed_feed.m_avg
 
     du[6+N] = (junction_mixed_feed.C - u[6+N]) / (pipe_to_membrane_seg_volume / u[1] * 3600.0)
     for m ∈ 1:M-1
@@ -188,7 +202,7 @@ function SBRO!(du, u, p, t)
     
     p.logger = SBROLoggerElement(
         fresh_feed, final_feed, final_brine, junction_brine, final_permeate,
-        ΔR_ms_array, power_feed, power_circ, t
+        ΔR_ms_array, power_feed, power_circ, deepcopy(u), deepcopy(du), t
     )
 
     return nothing
@@ -199,7 +213,7 @@ function sbro_save_func(u, t, integrator)
 end
 
 function process_semibatch_RO!(
-    feed_T, feed_C, feed_M, u₀,
+    feed_T, feed_C, feed_M, brine_M, u₀,
     flowrate_setpoint, pressure_setpoint;
     process::SemiBatchRO, dt::Unitful.Time, mode::Symbol=:CC, fouling::Bool=true
 )
@@ -209,6 +223,7 @@ function process_semibatch_RO!(
     feed_temperature_°C     = ustrip(uconvert(u"°C", feed_T))
     feed_concentration_kgm3 = ustrip(uconvert(u"kg/m^3", feed_C))
     feed_molar_mass_gmol    = ustrip(uconvert(u"g/mol", feed_M))
+    brine_molar_mass_gmol   = ustrip(uconvert(u"g/mol", brine_M))
     
     # Unit conversion: Feed water quality
     flowrate_setpoint_m3h   = ustrip(uconvert(u"m^3/hr", flowrate_setpoint))
@@ -219,17 +234,17 @@ function process_semibatch_RO!(
 
     # Setup logging components and callback function
     dummy_water   = Water(0.0, feed_temperature_°C, feed_concentration_kgm3, 1e5)
-    dummy_logger  = SBROLoggerElement(dummy_water, dummy_water, dummy_water, dummy_water, dummy_water, nothing, 0.0u"W", 0.0u"W", 0.0)
+    dummy_logger  = SBROLoggerElement(dummy_water, dummy_water, dummy_water, dummy_water, dummy_water, nothing, 0.0u"W", 0.0u"W", nothing, nothing, 0.0)
     logging_array = SavedValues(typeof(0.0), typeof(dummy_logger))
     log_callback  = SavingCallback(sbro_save_func, logging_array)
 
     # Setup parameters and initial condition
     if isnothing(u₀)
-        u₀ = [flowrate_setpoint_m3h, 1e5, 0.0, 1e5, fill(feed_concentration_kgm3, process.pipe_to_junction.n_segments+process.pipe_to_membrane.n_segments+1)...] # Configure u₀ with feed concentration, zero flow and atmospheric pressure.
+        u₀ = [flowrate_setpoint_m3h, 1e5, 0.0, 1e5, fill(feed_concentration_kgm3, process.pipe_to_junction.n_segments+process.pipe_to_membrane.n_segments+1)..., feed_molar_mass_gmol] # Configure u₀ with feed concentration, zero flow and atmospheric pressure.
     end
 
     params₀ = SBROParameters(
-        feed_concentration_kgm3, feed_temperature_°C, 1e5, feed_molar_mass_gmol,  # Feed info
+        feed_concentration_kgm3, feed_temperature_°C, 1e5, feed_molar_mass_gmol, brine_molar_mass_gmol,  # Feed & brine info
         flowrate_setpoint_m3h, pressure_setpoint_Pa,        # Process setpoints info
         process, mode,                                      # Target process info
         dummy_logger                                        # Logger info
@@ -239,6 +254,7 @@ function process_semibatch_RO!(
     # DP5 solver turned out to be more efficient compared to Tsit5.
     sbro_ODE = ODEProblem(SBRO!, u₀, (0.0, dt_sec), params₀)
     sbro_sol = solve(sbro_ODE, DP5(); callback=log_callback)
+    # sbro_sol = solve(sbro_ODE, Tsit5(); callback=log_callback, dtmax=1.0)
 
     # Store the last solution as initial condition of the next timestep
     next_u = deepcopy(sbro_sol.u[end])
@@ -255,6 +271,9 @@ function process_semibatch_RO!(
                                     :HPP_power=> getfield.(logging_array.saveval, :power_feed)[2:end],
                                     :Circ_power=>getfield.(logging_array.saveval, :power_circ)[2:end]
                                 )
+
+    u_log  = getfield.(logging_array.saveval, :u)[2:end]
+    du_log = getfield.(logging_array.saveval, :du)[2:end]
 
     # Rename dataframes before merging
     rename!((x -> "Raw_feed_"*x),         raw_feed_profile)
@@ -279,7 +298,7 @@ function process_semibatch_RO!(
         end
     end
 
-    return result_profile, next_u
+    return result_profile, next_u, u_log, du_log
 end
 
 end # SemiBatchODE
