@@ -77,7 +77,7 @@ function element_filtration(
         err          = abs((c_cal - c_guess) / c_cal)
         idx_iter     += 1
         if idx_iter ≥ 100
-            @assert false "\nFailed to converge. Iteration exceeded 100 times. Feed water: $(feed) c_guess: $(c_guess) c_cal: $(c_cal)"
+            @assert false "\nFailed to converge. Iteration exceeded 100 times. Feed water: $(feed) osmo_p_guess: $(osmo_p_guess) v_w_guess: $(v_w_guess)"
         end
     end
     

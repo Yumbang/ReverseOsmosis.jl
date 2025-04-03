@@ -42,7 +42,7 @@ function Base.show(io::IO, water::Water)
 end
 
 function unit_water(water::Water)
-    return (Q = water.Q*u"m^3/hr", T = water.T*u"°C", C = water.C*u"kg/m^3", P = water.P*u"Pa")
+    return (Q = water.Q*u"m^3/hr", T = water.T*u"°C", C = water.C*u"kg/m^3", P = water.P*u"Pa", M_avg =  water.m_avg*u"g/mol")
 end
 
 function profile_water(water::Water)
