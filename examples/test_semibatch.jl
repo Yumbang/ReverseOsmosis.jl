@@ -1,6 +1,4 @@
 begin
-    using Pkg
-    Pkg.activate("/Users/ybang_mac/Documents/병찬/Research/2025/Batch RO/Code/ReverseOsmosis.jl")
     using Revise
     using ReverseOsmosis
     using DataFrames
