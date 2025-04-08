@@ -20,6 +20,10 @@ export
 include("fluid.jl")
 include("membrane.jl")
 
+# # Register units (lmh, lmhbar)
+# include("ro_units.jl")
+# Unitful.register(ROUnits)
+
 # Filtration algorithm
 include("filtration.jl")
 using .Filtration
