@@ -3,12 +3,25 @@ module Filtration
 export
     # Filtration
     osmo_p, pump,
-    element_filtration, module_filtration, vessel_filtration
+    element_filtration, element_filtration2, module_filtration, vessel_filtration
 
 using Unitful
 using ..ReverseOsmosis: Water, Water2, pressurize, profile_water, mix
 using ..ReverseOsmosis: MembraneElement, MembraneElement2, MembraneModule, PressureVessel, profile_membrane, pristine_membrane
 
+"""
+Pressurize an `Water` with pressure to apply [Pa], with keyword argument `efficiency`.
+Returns pressurized `Water` and consumed power [W] as following:
+Power = (Feed volume⋅Aplied pressure)/(efficiency)
+"""
+function pump(feed::Union{Water, Water2}, pressure_to_apply::Float64; efficiency::Float64=0.8)
+    @assert (0.0 ≤ efficiency ≤ 1.0) "Pump efficiency must be between 0 and 1."
+    pressurized_water = pressurize(feed, pressure_to_apply)
+    power_consumption = (feed.Q / 3600) * pressure_to_apply / efficiency * u"W"
+    return (pressurized_water, power_consumption)
+end
+
+# =================================================== Definition of base functions for element filtration algorithms ===================================================
 
 """
 Calculates osmotic pressure of water based on van't Hoff equation.
@@ -28,17 +41,6 @@ function osmo_p(water::Union{Water, Water2})::Float64
     osmo_p(water.C, water.T, water.m_avg)
 end
 
-"""
-Pressurize an `Water` with pressure to apply [Pa], with keyword argument `efficiency`.
-Returns pressurized `Water` and consumed power [W] as following:
-Power = (Feed volume⋅Aplied pressure)/(efficiency)
-"""
-function pump(feed::Union{Water, Water2}, pressure_to_apply::Float64; efficiency::Float64=0.8)
-    @assert (0.0 ≤ efficiency ≤ 1.0) "Pump efficiency must be between 0 and 1."
-    pressurized_water = pressurize(feed, pressure_to_apply)
-    power_consumption = (feed.Q / 3600) * pressure_to_apply / efficiency * u"W"
-    return (pressurized_water, power_consumption)
-end
 
 """
 Calculate cake mass deposition flux (kg/m² ̇s) on membrane surface.
@@ -50,14 +52,14 @@ cf: Foulant concentration [kg/m³]
 mf_c: Cake mass deposition flux [kg/m²⋅s]
 
 15.0        : Empirical criteria flux [L/m²⋅h]
-1.0         : Empirical criteria velocity [m/s]
+0.1         : Empirical criteria velocity [m/s]
 (u/0.1)^0.4 : Empirical conversion factor [-]
 
 https://doi.org/10.1016/j.memsci.2008.01.030
 """
 function cake_mass(v, u, cf)
     v_crit = 15.0 / 3600.0 / 1e3 * (u / 0.1)^0.4
-    mf_c = cf * maximum(0.0, v - v_crit)
+    mf_c = cf * max(0.0, v - v_crit)
     return mf_c
 end
 
@@ -91,6 +93,10 @@ function k_CEMT(u, H, W, μ, ρ, ϵ, δ)
     return k_CEMT
 end
 
+# =================================================== Definition of element filtration algorithms ===================================================
+# All of the results are unit-safe, I promise 😤.
+# Using Unitful is an attractive idea, but it resulted in about x100 execution time.
+# Element filtration functions are called tremendously often, thus they must be extremely fast.
 
 """
 Model reverse osmosis of feed water on single membrane element.
@@ -173,21 +179,22 @@ function element_filtration2(
     # Membrane cross-section flux in m/s
     U_feed = Q_feed / element.width / local_height / 3600
     
-
     K      = element.spacer_resistance      # Spacer resistance coefficient
     k_fp   = element.k_fp                   # Fouling potential coefficient
+    
     μ      = 2.414e-5 * 10^(247.8 / (T_feed + 273.15 - 140)) # Water viscosity coefficient [Pa·s]
+    ρ      = 1e3                            # Water density (No temperature correction) [kg/m³]
+    
     ϵₚ     = 0.36                           # Cake layer porosity [-]
     ρₚ     = 1.4e3                          # Cake layer particle density  [kg/m³]
     dₚ     = 20e-9                          # Cake layer particle diameter [m]
-    ρ      = 1e3                            # Water density (No temperature correction) [kg/m³]
     
     A = 1 / (element.R_m + element.R_c) / μ  # Water permeability [m³/(m²·Pa·s)]
     B      = element.B                       # Salt permeability  [kg/(m²·Pa·s)]
     TCF_A  = exp(4140.0  * (1/(T_feed + 273.15) - 1/293.15)) # Temperature correction coefficient [-]
     TCF_B  = exp(-4968.0 * (1/(T_feed + 273.15) - 1/293.15)) # Temperature correction coefficient [-]
-    A_corr = A / TCF_A                      # Corrected water permeability (Divided because TCF_A is applied to A⁻¹(Resistance))
-    B_corr = B * TCF_B                      # Corrected salt permeability
+    A_corr = A / TCF_A                       # Corrected water permeability (Divided because TCF_A is applied to A⁻¹(Resistance))
+    B_corr = B * TCF_B                       # Corrected salt permeability
     
     # All of the concentration units are in kg/m³
     # All of the flux units are in m/s
@@ -196,20 +203,20 @@ function element_filtration2(
     local err         ::Float64 = 1.0       # Error
     local idx_iter    ::Int64   = 0         # Iteration index
     local cm_cal      ::Float64 = C_feed    # Brine concentration
+    local cm_guess    ::Float64 = 0.0
     local c_guess     ::Float64 = 0.0       # Bulk concentration
     local cp_guess    ::Float64 = 0.0       # Permeate concentration
     local v_w_guess   ::Float64 = 0.0       # Water flux through the membrane
     local v_s_guess   ::Float64 = 0.0       # Salt flux through the membrane
     local u_guess     ::Float64 = 0.0       # Brine flux over the membrane
     local osmo_p_guess::Float64 = 0.0       # Osmotic pressure
-
+    
     # Main loop
     while err > 1e-6
         cm_guess     = cm_cal
         osmo_p_guess = osmo_p(cm_guess, T_feed, M_feed)
         v_w_guess    = max(P_feed - osmo_p_guess, 1e-10) * A_corr
         v_s_guess    = B_corr * cm_guess
-        cp_guess     = v_s_guess / v_w_guess
         u_guess      = U_feed - v_w_guess * element.dx / local_height
         c_guess      = (U_feed * C_feed * local_height - v_s_guess * element.dx) / local_height / u_guess
         k_mt         = k_CEMT(u_guess, local_height, element.width, μ, ρ, ϵₚ, element.cake_thickness)
@@ -217,14 +224,18 @@ function element_filtration2(
         err          = abs((cm_cal - cm_guess) / cm_cal)
         idx_iter     += 1
         if idx_iter ≥ 100
-            @assert false "\nFailed to converge. Iteration exceeded 100 times. Feed water: $(feed) osmo_p_guess: $(osmo_p_guess) v_w_guess: $(v_w_guess)"
+            @assert false "\nFailed to converge. Iteration exceeded 100 times. Feed water: $(feed) | err: $(err)"
         end
     end
     
-    @assert (u_guess   > 0.0) "Brine flux is negative (u_guess: $(u_guess)). Backward flow isn't currently supported."
+    @assert (u_guess   > 0.0) "Brine flux is negative (u_guess: $(u_guess)). Backward flow isn't supported."
+    cp_guess = v_s_guess / v_w_guess
 
     m_fc_in  = Cf_feed * U_feed * local_height                           # Foulant mass inflow (kg/m⋅s)
-    m_fc_acc = k_fp * cake_mass(v_w_guess, u_guess, cm_cal) * element.dx # Foulant mass deposition rate (kg/m⋅s)
+    m_fc_acc = min(
+        k_fp * cake_mass(v_w_guess, u_guess, cm_cal) * element.dx,
+        m_fc_in
+        )                                                                # Foulant mass deposition rate (kg/m⋅s)
     m_fc_out = m_fc_in - m_fc_acc                                        # Foulant mass outflow (kg/m⋅s)
     cf_guess = m_fc_out / (u_guess * local_height)                       # Foulant concentration (kg/m³)
     
@@ -233,7 +244,8 @@ function element_filtration2(
     Q_p  = v_w_guess * element.width * element.dx * 3600.0 # Permeate flowrate [m³/h]
     Q_b  = Q_feed - Q_p                                    # Brine flowrate    [m³/h]
     C_p  = cp_guess
-    C_b  = cm_guess
+    C_b  = c_guess
+    # C_b  = cm_guess
     P_p  = 1e5                                             # Atmospheric pressure
     P_b  = P_feed - ((12 * K * μ * u_guess * element.dx) / local_height^2)
     Cf_p = 0.0                                             # Assume complete filtration of foulant (which is likely!)
@@ -255,6 +267,10 @@ function element_filtration2(
     return (brine, permeate, ΔCake_thickness, ΔR_c)
 end
 
+# =================================================== Definition of module / vessel filtration functions ===================================================
+# Both element_filtration and element_filtration2 algorithms are used inside dispatches of the functions.
+# If feed is Water and element is MembraneElement, element_filtration is used. If feed is Water2 and element is MembraneElement2, element_filtration2 is used.
+
 function module_filtration(
     feed::Water, membrane::MembraneModule; dt::Union{Float64, Nothing}=nothing
 )::Tuple{Array{Water}, Array{Water}, Array{Float64}}
@@ -263,15 +279,16 @@ function module_filtration(
     local permeate::Water
     local ΔR_m::Float64
 
-    @assert ((typeof(membrane.elements_array[1]) <: MembraneElement) & typeof(feed) <: Water2) ||
-            ((typeof(membrane.elements_array[1]) <: MembraneElement2) & typeof(feed) <: Water2) "Water type and membrane type do not match (Element type $(typeof(membrane.elements_array[1])), Feed type $(typeof(feed)))." 
+    @assert (typeof(membrane.elements_array[1]) <: MembraneElement)
+            "Water type and membrane type do not match (Element type $(typeof(membrane.elements_array[1])), Feed type $(typeof(feed)))." 
     
     brines    = []
     permeates = []
     ΔR_ms     = []
     
     next_feed = feed
-    for element in membrane.elements_array
+    for (i, element) in enumerate(membrane.elements_array)
+        # @debug "Processing segment #$(i)"
         brine, permeate, ΔR_m = element_filtration(next_feed, element; dt=dt)
         push!(brines, brine)
         push!(permeates, permeate)
@@ -291,8 +308,7 @@ function module_filtration(
     local ΔCake_thickness::Float64
     local ΔR_c::Float64
 
-    @assert ((typeof(membrane.elements_array[1]) <: MembraneElement) & typeof(feed) <: Water2) ||
-            ((typeof(membrane.elements_array[1]) <: MembraneElement2) & typeof(feed) <: Water2) 
+    @assert (typeof(membrane.elements_array[1]) <: MembraneElement2) & (typeof(feed) <: Water2)
             "Water type and membrane type do not match (Element type $(typeof(membrane.elements_array[1])), Feed type $(typeof(feed)))." 
     
     brines    = []
@@ -301,7 +317,8 @@ function module_filtration(
     ΔR_cs     = []
     
     next_feed = feed
-    for element in membrane.elements_array
+    for (i, element) in enumerate(membrane.elements_array)
+        # @info "\tProcessing segment #$(i)"
         brine, permeate, ΔCake_thickness, ΔR_c = element_filtration2(next_feed, element; dt=dt)
         push!(brines, brine)
         push!(permeates, permeate)
@@ -310,12 +327,14 @@ function module_filtration(
         next_feed = brine
     end
 
+    # @info "Cake thickness increase (w.o. dt)" ΔCake_thicknesses
+
     return brines, permeates, ΔCake_thicknesses, ΔR_cs
 end
 
 function vessel_filtration(
     feed::Water, vessel::PressureVessel; dt::Union{Float64, Nothing}=nothing
-)
+)::Tuple{Array{Array{Water}}, Vector{Vector{Water}}, Vector{Vector{Float64}}}
     local next_feed::Water
     local brines::Array{Water}
     local permeates::Array{Water}
@@ -339,12 +358,12 @@ end
 
 function vessel_filtration(
     feed::Water2, vessel::PressureVessel; dt::Union{Float64, Nothing}=nothing
-)
+)::Tuple{Array{Array{Water2}}, Array{Array{Water2}}, Vector{Vector{Float64}}, Vector{Vector{Float64}}}
     local next_feed::Water2
     local brines::Array{Water2}
     local permeates::Array{Water2}
-    local ΔCake_thicknesses_array::Array{Float64}
-    local ΔR_cs_array::Array{Float64}
+    local ΔCake_thicknesses::Array{Float64}
+    local ΔR_cs::Array{Float64}
 
     brines_array          = []
     permeates_array       = []
@@ -352,13 +371,16 @@ function vessel_filtration(
     ΔR_cs_array           = []
 
     next_feed = feed
-    for membrane in vessel.modules_array
+    for (i, membrane) in enumerate(vessel.modules_array)
+        # @info "Processing module # $(i)"
+        # @info "This feed: " next_feed
         brines, permeates, ΔCake_thicknesses, ΔR_cs = module_filtration(next_feed, membrane; dt=dt)
         push!(brines_array, brines)
         push!(permeates_array, permeates)
         push!(ΔCake_thicknesses_array, ΔCake_thicknesses)
         push!(ΔR_cs_array, ΔR_cs)
         next_feed = brines[end]
+        # @info "Last brine:" brines[end]
     end
 
     return brines_array, permeates_array, ΔCake_thicknesses_array, ΔR_cs_array
