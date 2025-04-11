@@ -1,7 +1,7 @@
 name = "ReverseOsmosis"
 uuid = "90c5803b-0a13-4606-b42d-93b6628f5af1"
 authors = ["Yumbang <59196217+Yumbang@users.noreply.github.com>"]
-version = "0.1.1"
+version = "0.2.0"
 
 [deps]
 Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
