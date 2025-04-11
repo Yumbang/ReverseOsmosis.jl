@@ -106,7 +106,24 @@ function pristine_vessel(
     length::Float64, height::Float64, width::Float64,
     R_m::Float64, k_fp::Float64, spacer_resistance::Float64, salt_rejection::Float64
 )
-    pristine_membrane       = pristine_membrane(n_segments, length, height, width, R_m, k_fp, spacer_resistance, salt_rejection)
+    pristine_module         = pristine_membrane(n_segments, length, height, width, R_m, k_fp, spacer_resistance, salt_rejection)
+
+    n_modules               = n_modules
+    n_segments_array        = [n_segments for _ in range(1,n_modules)]
+    length_array            = [length for _ in range(1,n_modules)]
+    width_array             = [width  for _ in range(1,n_modules)]
+    pristine_modules_array  = [deepcopy(pristine_module) for _ in range(1,n_modules)]
+    
+    return PressureVessel(n_modules, n_segments_array, length_array, width_array, pristine_modules_array)
+end
+
+function pristine_vessel2(
+    n_modules::Int64, n_segments::Int64,
+    length::Float64, height::Float64, width::Float64,
+    R_m::Float64, B::Float64,
+    k_fp::Float64, spacer_resistance::Float64
+)
+    pristine_membrane       = pristine_membrane2(n_segments, length, height, width, R_m, B, k_fp, spacer_resistance)
 
     n_modules               = n_modules
     n_segments_array        = [n_segments for _ in range(1,n_modules)]
@@ -154,7 +171,7 @@ end
 function unit_element(element::MembraneElement2)
     return (
         height = element.height * u"m", width = element.width * u"m",
-        dx = element.dx * u"m", spacer_resistance = element.spacer_resistance,
+        dx = element.dx * u"m", spacer_resistance = element.spacer_resistance, cake_thickness = element.cake_thickness * u"m",
         R_m = element.R_m * u"m^-1", R_c = element.R_c * u"m^-1", k_fp = element.k_fp,
         B = element.B * u"kg/m"
     )

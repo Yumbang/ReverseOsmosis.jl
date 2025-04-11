@@ -31,6 +31,9 @@ Mix `Water` instances with `pressure` keyword argument
 Returns Mixed `Water` instance.
 """
 function mix(water1::Water, water2::Water; pressure::Float64=1e5)
+    if ((water1.Q == 0.0) & (water2.Q == 0.0))
+        @warn "Flow rate of both Water instances are zero. Mixing result will not be reliable."
+    end
     flow            = water1.Q + water2.Q
     temperature     = (water1.T * water1.Q + water2.T * water2.Q) / flow
     concentration   = (water1.C * water1.Q + water2.C * water2.Q) / flow
@@ -39,6 +42,9 @@ function mix(water1::Water, water2::Water; pressure::Float64=1e5)
 end
 
 function mix(water1::Water2, water2::Water2; pressure::Float64=1e5)
+    if (water1.Q == 0.0) & (water2.Q == 0.0)
+        @warn "Flow rate of both Water2 instances are zero. Mixing result will not be reliable."
+    end
     flow            = water1.Q + water2.Q
     temperature     = (water1.T * water1.Q + water2.T * water2.Q)   / flow
     concentration   = (water1.C * water1.Q + water2.C * water2.Q)   / flow
@@ -53,8 +59,8 @@ end
 
 
 """
-Pressurize an `Water(2)` with pressure_to_apply.
-Returns new `Water(2)` by adding up the pressure.
+Pressurize an `Water(or 2)` with pressure_to_apply.
+Returns new `Water(or 2)` by adding up the pressure.
 """
 function pressurize(water::Water, pressure_to_apply::Float64)
     return Water(water.Q, water.T, water.C, water.P + pressure_to_apply)
