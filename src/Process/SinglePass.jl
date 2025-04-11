@@ -6,10 +6,10 @@ export
 
 using DataFrames, Unitful
 
-using ...ReverseOsmosis: Water, pressurize, profile_water, mix
+using ...ReverseOsmosis: Water, Water2, pressurize, profile_water, mix
 
-using ...ReverseOsmosis: MembraneElement, MembraneModule, PressureVessel,
-        profile_membrane, pristine_membrane, foul!
+using ...ReverseOsmosis: MembraneElement, MembraneElement2, MembraneModule, PressureVessel,
+        profile_membrane, pristine_membrane, pristine_membrane2, foul!
 
 using ...ReverseOsmosis: pump, vessel_filtration
 
@@ -57,6 +57,51 @@ function process_singlepass_RO!(
 
     if fouling
         foul!(process.pressure_vessel, ΔR_ms_array)
+    end
+
+    final_brine     = brines_array[end][end]
+    final_permeate  = mix(reduce(vcat, permeates_array); pressure=1e-5)
+
+    if profile_process
+        brines_profile      = vcat([profile_water(brines) for brines in brines_array]...)
+        permeates_profile   = vcat([profile_water(permeates) for permeates in permeates_array]...)
+    else
+        brines_profile      = [nothing]
+        permeates_profile   = [nothing]
+    end
+
+    return final_brine, final_permeate, brines_profile, permeates_profile, power_consumption
+end
+
+function process_singlepass_RO!(
+    unpressurized_feed::Water2, pressure_setpoint::Unitful.Pressure;
+    process::SinglePassRO, dt::Unitful.Time, mode::Symbol=:forward, fouling::Bool=true, profile_process::Bool=false
+)
+    @assert (mode == :forward) "Only forward mode is supported in single-pass RO process."
+
+    pressure_setpoint_Pa = Float64(uconvert(u"Pa", pressure_setpoint)/u"Pa")
+    if unpressurized_feed.P ≥ pressure_setpoint_Pa
+        @warn "Feed pressure is higher than pressure setpoint."
+        pressure_setpoint_Pa = unpressurized_feed.P
+    end
+
+    local brines_array::Array{Array{Water}}
+    local permeates_array::Array{Array{Water}}
+    local ΔR_ms_array::Array{Array{Float64}}
+    η_pump  = process.pump_efficiency
+    dt_sec  = dt |> u"s" |> ustrip
+
+    # Feed pressurization and power consumption eseimation. `power_consumption` is `Unitful` power.
+    pressure_to_apply = pressure_setpoint_Pa - unpressurized_feed.P
+    pressurized_feed, power_consumption = pump(unpressurized_feed, pressure_to_apply; efficiency = η_pump)
+
+    brines_array, permeates_array, ΔCake_thicknesses_array, ΔR_cs_array = vessel_filtration(
+                                                    pressurized_feed, process.pressure_vessel;
+                                                    dt=dt_sec
+                                                )
+
+    if fouling
+        foul!(process.pressure_vessel, ΔCake_thicknesses_array, ΔR_cs_array)
     end
 
     final_brine     = brines_array[end][end]
