@@ -4,17 +4,19 @@ using Printf, DataFrames, Unitful
 
 export
     # Fluid
-    Water, pressurize, profile_water, mix,
+    Water, Water2, pressurize, profile_water, mix,
     # Membrane
-    MembraneElement, MembraneModule, PressureVessel,
-    pristine_membrane, pristine_vessel,
-    profile_membrane, profile_vessel,
+    MembraneElement, MembraneElement2, MembraneModule, PressureVessel,
+    pristine_membrane, pristine_membrane2, pristine_vessel, pristine_vessel2,
+    profile_membrane, profile_vessel, foul!,
     # Filtration
     osmo_p, pump,
-    element_filtration, module_filtration, vessel_filtration,
+    element_filtration, element_filtration2, module_filtration, vessel_filtration,
     # Process models
     SinglePassRO, process_singlepass_RO!,
     CirculationPipe, SemiBatchRO, process_semibatch_RO!
+    # # Useful units
+    # lmh, lmhbar
 
 # Basic elements
 include("fluid.jl")
