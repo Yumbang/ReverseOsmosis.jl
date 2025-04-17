@@ -254,8 +254,8 @@ function element_filtration2(
     # If dt isn't given, return ΔR_m which is d(R_m)/dt.
     # If dt is given, return ΔR_m which is actual increase of membrane resistance.
     if isnothing(dt)
-        ΔCake_thickness = m_fc_acc / ρₚ / (1 - ϵₚ) / element.dx                   # Cake thickness increase (m/s)
-        ΔR_c            = 180.0 * (1 - ϵₚ) / ρₚ / dₚ^2 / ϵₚ^3 * m_fc_acc           # Cake layer resistance increase (Carman-Kozeny equation in Darcy's law)
+        ΔCake_thickness = m_fc_acc / ρₚ / (1 - ϵₚ) / element.dx                   # Cake thickness increase rate (m/s)
+        ΔR_c            = 180.0 * (1 - ϵₚ) / ρₚ / dₚ^2 / ϵₚ^3 * m_fc_acc           # Cake layer resistance increase rate (Carman-Kozeny equation in Darcy's law)
     else
         ΔCake_thickness = m_fc_acc / ρₚ / (1 - ϵₚ) / element.dx * dt              # Cake thickness increase (m)
         ΔR_c            = 180.0 * (1 - ϵₚ) / ρₚ / dₚ^2 / ϵₚ^3 * m_fc_acc * dt      # Cake layer resistance increase (Carman-Kozeny equation in Darcy's law)
