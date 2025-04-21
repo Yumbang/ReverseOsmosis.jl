@@ -212,7 +212,7 @@ function element_filtration2(
     local osmo_p_guess::Float64 = 0.0       # Osmotic pressure
     
     # Main loop
-    while err > 1e-6
+    while err > 1e-4
         cm_guess     = cm_cal
         osmo_p_guess = osmo_p(cm_guess, T_feed, M_feed)
         v_w_guess    = max(P_feed - osmo_p_guess, 1e-10) * A_corr
@@ -228,7 +228,7 @@ function element_filtration2(
         end
     end
     
-    @assert (u_guess   > 0.0) "Brine flux is negative (u_guess: $(u_guess)). Backward flow isn't supported."
+    @assert (u_guess > 0.0) "Brine flux is negative (u_guess: $(u_guess)). Backward flow isn't supported."
     cp_guess = v_s_guess / v_w_guess
 
     m_fc_in  = Cf_feed * U_feed * local_height                           # Foulant mass inflow (kg/m⋅s)

@@ -13,8 +13,11 @@ export
     osmo_p, pump,
     element_filtration, element_filtration2, module_filtration, vessel_filtration,
     # Process models
+    # Single-pass
     SinglePassRO, process_singlepass_RO!,
-    CirculationPipe, SemiBatchRO, process_semibatch_RO!
+    # Semi-batch
+    CirculationPipe, CirculationPipe2, empty_pipe, empty_pipe2, fill_pipe!, update_pipe!,
+    SemiBatchRO, process_semibatch_RO!
     # # Useful units
     # lmh, lmhbar
 
