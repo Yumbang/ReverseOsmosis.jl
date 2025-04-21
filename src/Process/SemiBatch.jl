@@ -61,6 +61,11 @@ function update_pipe!(influent::Water, dt::Float64; pipe::CirculationPipe)::Wate
     u                   = influent.Q / 3600 / pipe.area # [m/s]
     dx                  = u * dt                        # [m]
 
+    if dx ≈ 0.0
+        println("dx is too small. Skip updating pipe... $(influent)")
+        return Water(influent.Q, influent.T, pipe.C_array[end], influent.P, influent.m_avg)
+    end
+
     # Pipe segments' concentration mapping
     len_seg = pipe.length / pipe.n_segments          # [m]
     initial_centroid  = len_seg/2.0                  # [m]
@@ -93,13 +98,17 @@ function update_pipe!(influent::Water2, dt::Float64; pipe::CirculationPipe2)::Wa
     u                   = influent.Q / 3600 / pipe.area # [m/s]
     dx                  = u * dt                        # [m]
 
+    if dx == 0.0
+        println("dx is too small. Skip updating pipe... (Influent: $(influent))")
+        return Water2(influent.Q, influent.T, pipe.C_array[end], pipe.Cf_array[end], influent.P, influent.m_avg)
+    end
     # ======================= C =======================
     # Pipe segments' concentration mapping
-    len_seg_C  = pipe.length / pipe.n_segments_C         # [m]
-    initial_centroid_C  = len_seg_C/2.0                  # [m]
-    last_centroid_C     = pipe.length - len_seg_C/2.0    # [m]
+    len_seg_C  = pipe.length / pipe.n_segments_C       # [m]
+    initial_centroid_C  = len_seg_C/2.0                # [m]
+    last_centroid_C     = pipe.length - len_seg_C/2.0  # [m]
     centroids_C         = range(initial_centroid_C, last_centroid_C, length=pipe.n_segments_C)
-    shifted_centroids_C = centroids_C .+ dx              # [m]
+    shifted_centroids_C = centroids_C .+ dx            # [m]
     C                   = influent.C                   # [kg/m³]
 
     # Updated segments' concentration calculation
@@ -114,7 +123,8 @@ function update_pipe!(influent::Water2, dt::Float64; pipe::CirculationPipe2)::Wa
     n_eff_segs_C = floor(Int64, eff_segs_C)
     remain_seg_C = eff_segs_C - n_eff_segs_C
     
-    C_eff = (remain_seg_C * pipe.C_array[end-n_eff_segs_C] + sum(pipe.C_array[end-n_eff_segs_C+1:end])) / eff_segs_C
+    C_eff        = (remain_seg_C * pipe.C_array[end-n_eff_segs_C] +
+                     sum(pipe.C_array[end-n_eff_segs_C+1:end])) / eff_segs_C
 
     pipe.C_array = updated_C_array
 
@@ -166,18 +176,6 @@ mutable struct SemiBatchRO
     pressure_vessel::PressureVessel
 end
 
-
-# """
-# Model junction that circulated brine and feed merge.
-# In most of the cases, both water are pressurized to same pressure setpoint.
-# If junction_loss is 0.0, there is no loss, assuming ideal junction.
-# """
-# function junction(circulated_brine::Union{Water, Water2}, feed::Union{Water, Water2}; junction_loss::Float64)
-#     @assert (0.0 ≤ junction_loss ≤ 1.0)     "Junction loss must be between 0 and 1."
-#     merged_pressure = min(circulated_brine.P, feed.P) * (1.0-junction_loss)
-#     mixed_water     = mix(circulated_brine, feed; pressure=merged_pressure)
-#     return mixed_water
-# end
 
 function process_semibatch_RO!(
     fresh_feed::Water, last_raw_brine::Water, flowrate_setpoint::typeof(0.0u"m^3/hr"), pressure_setpoint::typeof(0.0u"bar");
@@ -270,7 +268,7 @@ function process_semibatch_RO!(
 
         brines_array    = RO_result[1]
         permeates_array = RO_result[2]
-        fouling_info    = RO_result[3] # ΔCake_thicknesses_array, ΔR_cs_array
+        fouling_info    = RO_result[3] # ΔR_ms_array
 
         split_brine    = brines_array[end][end]
         raw_brine      = Water(split_brine.Q * process.n_vessels, split_brine.T,
@@ -338,9 +336,11 @@ end
 
 function process_semibatch_RO!(
     fresh_feed::Water2, last_raw_brine::Water2, flowrate_setpoint::typeof(0.0u"m^3/hr"), pressure_setpoint::typeof(0.0u"bar");
+    # fresh_feed::Water2, last_raw_brine::Water2, last_final_permeate::Water2, pressure_setpoint::typeof(0.0u"bar");
     Δt::Unitful.Time, mode::Symbol, process::SemiBatchRO, fouling::Bool=true
     )
     local last_brine::Water2
+    local last_permeate::Water2
 
     dt       = 0.1u"s" # HARD CODED dt
     dt_sec   = ustrip(dt)
@@ -364,9 +364,12 @@ function process_semibatch_RO!(
     permeate_log     = Water2[]
     power_circ_log   = typeof(0.0u"W")[]
     power_HPP_log    = typeof(0.0u"W")[]
+    
+    pipe_j_profile_log = []
+    pipe_m_profile_log = []
 
-    last_brine = last_raw_brine
-
+    last_brine    = last_raw_brine
+    # last_permeate = last_final_permeate
 
     for iter ∈ 1:iter_num
         t += dt_sec
@@ -377,6 +380,7 @@ function process_semibatch_RO!(
 
             # Define fresh feed
             fresh_feed_Q = max(0.0, flowrate_setpoint_m3h - junction_effluent.Q)
+            # fresh_feed_Q = last_permeate.Q
             fresh_feed   = Water2(fresh_feed_Q, fresh_feed.T, fresh_feed.C, fresh_feed.Cf, fresh_feed.P, fresh_feed.m_avg)
 
             # Calculate pressure to apply
@@ -401,6 +405,7 @@ function process_semibatch_RO!(
 
             # Define fresh feed
             fresh_feed_Q = flowrate_setpoint_m3h
+            # fresh_feed_Q = last_permeate.Q
             fresh_feed   = Water2(fresh_feed_Q, fresh_feed.T, fresh_feed.C, fresh_feed.Cf, fresh_feed.P, fresh_feed.m_avg)
 
             # Calculate pressure to apply
@@ -459,8 +464,12 @@ function process_semibatch_RO!(
         push!(permeate_log,     final_permeate)
         push!(power_circ_log,   power_circ)
         push!(power_HPP_log,    power_HPP)
+
+        push!(pipe_j_profile_log, process.pipe_to_junction.C_array)
+        push!(pipe_m_profile_log, process.pipe_to_membrane.C_array)
         
-        last_brine = raw_brine
+        last_brine    = raw_brine
+        # last_permeate = final_permeate
     end
 
     time_profile         = DataFrame(:time => time_log .* u"s")
@@ -491,7 +500,9 @@ function process_semibatch_RO!(
     result_profile.time_diff .= dt
     result_profile.mode      .= mode
 
-    return result_profile, last_brine
+    # return result_profile, last_brine, last_permeate
+    # return result_profile, last_brine
+    return result_profile, last_brine, pipe_j_profile_log, pipe_m_profile_log
 end
 end # SemiBatchODE
 
