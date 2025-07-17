@@ -42,7 +42,7 @@ function process_singlepass_RO!(
 
     local brines_array::Array{Array{Water}}
     local permeates_array::Array{Array{Water}}
-    local ΔR_ms_array::Array{Array{Float64}}
+    local ΔR_ms_array::Vector{Vector{Float64}}
     η_pump  = process.pump_efficiency
     dt_sec  = Float64(uconvert(u"s", dt)/u"s")
 
