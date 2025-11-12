@@ -1,3 +1,28 @@
+"""
+    Filtration
+
+Core module implementing reverse osmosis filtration algorithms.
+
+This module contains the fundamental physics-based models for simulating
+membrane filtration processes, including:
+- Osmotic pressure calculations (van't Hoff equation)
+- Pump energy modeling
+- Element-level filtration with concentration polarization
+- Module and vessel-level filtration cascades
+- Fouling dynamics (resistance increase and cake layer formation)
+
+# Performance Note
+Filtration functions intentionally avoid Unitful.jl in hot loops for
+~100x performance improvement. Units are handled at API boundaries only.
+
+# Exported Functions
+- `osmo_p`: Osmotic pressure calculation
+- `pump`: Pump modeling with energy consumption
+- `element_filtration`: Single element filtration (MembraneElement)
+- `element_filtration2`: Advanced element filtration (MembraneElement2)
+- `module_filtration`: Module-level filtration cascade
+- `vessel_filtration`: Vessel-level filtration cascade
+"""
 module Filtration
 
 export
@@ -9,10 +34,34 @@ using Unitful
 using ..ReverseOsmosis: Water, Water2, pressurize, profile_water, mix
 using ..ReverseOsmosis: MembraneElement, MembraneElement2, MembraneModule, PressureVessel, profile_membrane, pristine_membrane
 
+# ===================================================================
+# Pump Modeling
+# ===================================================================
+
 """
-Pressurize an `Water` with pressure to apply [Pa], with keyword argument `efficiency`.
-Returns pressurized `Water` and consumed power [W] as following:
-Power = (Feed volume⋅Aplied pressure)/(efficiency)
+    pump(feed::Union{Water, Water2}, pressure_to_apply::Float64; efficiency::Float64=0.8)
+
+Model high-pressure pump with energy consumption calculation.
+
+# Arguments
+- `feed::Union{Water, Water2}`: Feed water stream
+- `pressure_to_apply::Float64`: Pressure increase [Pa]
+- `efficiency::Float64=0.8`: Pump isentropic efficiency (0-1)
+
+# Returns
+- Tuple of (pressurized_water, power_consumption)
+  - `pressurized_water`: Water stream with increased pressure
+  - `power_consumption`: Electrical power consumption [W] with Unitful units
+
+# Formula
+Power = (Volumetric flow × Pressure increase) / efficiency
+
+# Examples
+```julia
+feed = Water(10.0, 25.0, 35.0, 1e5)
+pressurized, power = pump(feed, 50e5; efficiency=0.8)
+# Returns water at 51 bar and power consumption in watts
+```
 """
 function pump(feed::Union{Water, Water2}, pressure_to_apply::Float64; efficiency::Float64=0.8)
     @assert (0.0 ≤ efficiency ≤ 1.0) "Pump efficiency must be between 0 and 1."
@@ -21,20 +70,54 @@ function pump(feed::Union{Water, Water2}, pressure_to_apply::Float64; efficiency
     return (pressurized_water, power_consumption)
 end
 
-# =================================================== Definition of base functions for element filtration algorithms ===================================================
+# ===================================================================
+# Osmotic Pressure Calculations
+# ===================================================================
 
 """
-Calculates osmotic pressure of water based on van't Hoff equation.
+    osmo_p(concentration::Float64, temperature::Float64)::Float64
+    osmo_p(concentration::Float64, temperature::Float64, m_avg::Float64)::Float64
+    osmo_p(water::Union{Water, Water2})::Float64
 
-concentration   : Mass concentration (TDS) as kg/m³
-m_avg           : Average ion molecular weight (if not given, assume most of the ions are NaCl)
+Calculate osmotic pressure using van't Hoff equation.
+
+# Arguments
+- `concentration::Float64`: Salt concentration (TDS) [kg/m³]
+- `temperature::Float64`: Temperature [°C]
+- `m_avg::Float64`: Average ion molecular weight [g/mol] (default: 58.44 for NaCl)
+- `water::Union{Water, Water2}`: Water stream (extracts C, T, m_avg)
+
+# Returns
+- `Float64`: Osmotic pressure [Pa]
+
+# Formula
+π = (i × C × R × T) / M_avg
+
+Where:
+- i = 2 (van't Hoff factor for 1:1 salt)
+- C = concentration [kg/m³]
+- R = 8.3145 kJ/(kmol·K) (gas constant)
+- T = temperature [K]
+- M_avg = average molecular weight [g/mol]
+
+# Note
+Assumes complete dissociation. For seawater or mixed electrolytes,
+experimental corrections may be needed at high concentrations.
+
+# Examples
+```julia
+π = osmo_p(35.0, 25.0)          # Seawater at 25°C: ~27 bar
+π = osmo_p(35.0, 25.0, 58.44)   # Explicitly specify NaCl
+feed = Water(10.0, 25.0, 35.0, 1e5)
+π = osmo_p(feed)                # From Water struct
+```
 """
 function osmo_p(concentration::Float64, temperature::Float64)::Float64
     return 2 / 58.44 * concentration * 8.3145e3 * (temperature + 273.15) # Assuming all of the ions are Na⁺ ions
 end
 
 function osmo_p(concentration::Float64, temperature::Float64, m_avg::Float64)::Float64
-    return 2 / m_avg * concentration * 8.3145e3 * (temperature + 273.15) # Assuming all of the ions are Na⁺ ions
+    return 2 / m_avg * concentration * 8.3145e3 * (temperature + 273.15)
 end
 
 function osmo_p(water::Union{Water, Water2})::Float64
@@ -42,19 +125,33 @@ function osmo_p(water::Union{Water, Water2})::Float64
 end
 
 
+# ===================================================================
+# Fouling Helper Functions
+# ===================================================================
+
 """
-Calculate cake mass deposition flux (kg/m² ̇s) on membrane surface.
+    cake_mass(v, u, cf)
 
-v: Cross-membrane flux [m/s]
-u: Brine velocity [m/s]
-cf: Foulant concentration [kg/m³]
+Calculate cake layer mass deposition flux on membrane surface.
+Uses critical flux concept with empirical correlations.
 
-mf_c: Cake mass deposition flux [kg/m²⋅s]
+# Arguments
+- `v`: Transmembrane water flux [m/s]
+- `u`: Tangential brine velocity [m/s]
+- `cf`: Foulant concentration in bulk [kg/m³]
 
-15.0        : Empirical criteria flux [L/m²⋅h]
-0.1         : Empirical criteria velocity [m/s]
-(u/0.1)^0.4 : Empirical conversion factor [-]
+# Returns
+- Cake mass deposition flux [kg/m²·s]
 
+# Model Description
+Critical flux model where deposition only occurs above threshold:
+- v_crit = 15 L/m²/h × (u/0.1 m/s)^0.4
+- Deposition flux = cf × max(0, v - v_crit)
+
+Higher crossflow velocity increases critical flux (shear removes foulants).
+
+# Reference
+Chong et al. (2008), J. Membrane Sci. 314:89-95
 https://doi.org/10.1016/j.memsci.2008.01.030
 """
 function cake_mass(v, u, cf)
@@ -63,18 +160,37 @@ function cake_mass(v, u, cf)
     return mf_c
 end
 
-
 """
-Calculate Cake-Enhanced Mass Transfer parameter (k_CEMT) based Sherwood number
+    k_CEMT(u, H, W, μ, ρ, ϵ, δ)
 
-u: Brine velocity [m/s]
-H: Membrane height [m]
-W: Membrane width [m]
-μ: Water viscosity [Pa.s]
-ρ: Water density [kg/m³]
-ϵ: Cake layer porosity [-]
-δ: Cake layer thickness [m]
+Calculate Cake-Enhanced Mass Transfer (CEMT) coefficient.
+Accounts for how cake layer affects salt transport to membrane surface.
 
+# Arguments
+- `u`: Brine velocity [m/s]
+- `H`: Channel height [m]
+- `W`: Channel width [m]
+- `μ`: Water dynamic viscosity [Pa·s]
+- `ρ`: Water density [kg/m³]
+- `ϵ`: Cake layer porosity [-]
+- `δ`: Cake layer thickness [m]
+
+# Returns
+- Cake-enhanced mass transfer coefficient [m/s]
+
+# Model Description
+Combines:
+1. Bulk mass transfer (Sherwood correlation)
+2. Diffusion through porous cake layer
+3. Tortuosity effects in cake
+
+Key equations:
+- Sh = 0.065 × Re^0.875 × Sc^0.25 (Schock-Miquel correlation)
+- τ_c = 1 - 2ln(ϵ) (cake tortuosity)
+- 1/k_CEMT = δ(1/D_c - 1/D_b) + 1/k (series resistances)
+
+# Reference
+Jiang et al. (2021), Desalination 510:115289
 https://doi.org/10.1016/j.desal.2021.115289
 """
 function k_CEMT(u, H, W, μ, ρ, ϵ, δ)
@@ -87,20 +203,63 @@ function k_CEMT(u, H, W, μ, ρ, ϵ, δ)
     Sc  = ν / D_b                       # Schmidt number  [-]
     Sh  = 0.065 * Re^0.875 * Sc^0.25    # Sherwood number [-]
     k   = Sh * D_b / dh                 # Mass transfer coefficient [m/s]
-    
+
     k_CEMT = 1 / (δ * (1 / D_c - 1 / D_b) + 1 / k) # Cake-enhanced mass transfer coefficient [m/s]
-    
+
     return k_CEMT
 end
 
-# =================================================== Definition of element filtration algorithms ===================================================
-# All of the results are unit-safe, I promise 😤.
-# Using Unitful is an attractive idea, but it resulted in about x100 execution time.
-# Element filtration functions are called tremendously often, thus they must be extremely fast.
+# ===================================================================
+# Element Filtration Algorithms (Core Simulation Functions)
+# ===================================================================
+# Performance critical: Intentionally avoids Unitful.jl for ~100x speedup
+# All inputs/outputs are in SI base units (Pa, m, kg, s, °C)
+# ===================================================================
 
 """
-Model reverse osmosis of feed water on single membrane element.
-Returns brine & permeate and resistance increase (i.e. fouling effect).
+    element_filtration(feed::Water, element::MembraneElement; dt::Union{Float64, Nothing}=nothing)
+
+Simulate single-pass filtration through one membrane element.
+Uses resistance model with fixed salt rejection coefficient.
+
+# Arguments
+- `feed::Water`: Inlet water stream
+- `element::MembraneElement`: Membrane element to simulate
+- `dt::Union{Float64, Nothing}=nothing`: Time step [s] (if provided, returns absolute fouling change)
+
+# Returns
+- Tuple of `(brine, permeate, ΔR_m)`
+  - `brine::Water`: Concentrate stream exiting element
+  - `permeate::Water`: Permeate stream produced
+  - `ΔR_m::Float64`: Resistance increase [Pa·s/m] or rate [Pa·s/m·s] depending on dt
+
+# Model Description
+Iteratively solves for brine concentration considering:
+1. **Water flux**: v_w = (P - π) / R_m (resistance model)
+2. **Salt transport**: Based on rejection coefficient
+3. **Pressure drop**: Hagen-Poiseuille flow through spacer
+4. **Concentration polarization**: Iterative mass balance
+5. **Fouling**: ΔR_m = k_fp × v_w (× dt if provided)
+
+# Convergence
+- Tolerance: 1e-6 relative error
+- Max iterations: 100
+- Fails with assertion if non-convergent
+
+# Physical Constraints
+- Asserts positive brine velocity (no backflow)
+- Handles zero permeate flux (when P < π)
+
+# Note
+Temperature-dependent viscosity: Vogel equation
+μ = 2.414×10⁻⁵ × 10^(247.8/(T+133.15))
+
+# Examples
+```julia
+feed = Water(10.0, 25.0, 35.0, 55e5)
+element = MembraneElement(7e-4, 37.0/50, 1.016/50, 16.0, 6.8e10, 0.67e9, 0.995)
+brine, permeate, dR = element_filtration(feed, element; dt=3600.0)
+```
 """
 function element_filtration(
     feed::Water, element::MembraneElement; dt::Union{Float64, Nothing}=nothing
@@ -164,6 +323,70 @@ function element_filtration(
     return (brine, permeate, ΔR_m)
 end
 
+"""
+    element_filtration2(feed::Water2, element::MembraneElement2; dt::Union{Float64, Nothing}=nothing)
+
+Advanced element filtration with solution-diffusion model and cake layer dynamics.
+Tracks foulant concentration and cake layer formation.
+
+# Arguments
+- `feed::Water2`: Inlet water stream with foulant concentration
+- `element::MembraneElement2`: Membrane element with cake layer tracking
+- `dt::Union{Float64, Nothing}=nothing`: Time step [s] (if provided, returns absolute changes)
+
+# Returns
+- Tuple of `(brine, permeate, ΔCake_thickness, ΔR_c)`
+  - `brine::Water2`: Concentrate stream exiting element
+  - `permeate::Water2`: Permeate stream produced
+  - `ΔCake_thickness::Float64`: Cake thickness increase [m] or rate [m/s]
+  - `ΔR_c::Float64`: Cake resistance increase [m⁻¹] or rate [m⁻¹/s]
+
+# Model Description
+**Solution-Diffusion Model:**
+- Water flux: v_w = A × (P - π) where A = 1/(R_m + R_c)/μ
+- Salt flux: v_s = B × C_membrane
+
+**Concentration Polarization:**
+- Film theory with cake enhancement
+- C_membrane = C_bulk × exp(v_w / k_CEMT)
+- k_CEMT accounts for mass transfer through cake layer
+
+**Fouling Dynamics:**
+- Critical flux model for cake deposition
+- Carman-Kozeny equation for cake resistance:
+  R_c = 180(1-ε)/ρ_p/d_p²/ε³ × m_cake
+- Foulants completely rejected (Cf_permeate = 0)
+
+**Temperature Correction:**
+- TCF_A = exp(4140(1/T - 1/20°C)) for water permeability
+- TCF_B = exp(-4968(1/T - 1/20°C)) for salt permeability
+
+# Physical Parameters (Hard-coded)
+- Cake porosity: ε_p = 0.36
+- Particle density: ρ_p = 1400 kg/m³
+- Particle diameter: d_p = 20 nm
+- Critical flux: 15 L/m²/h @ 0.1 m/s
+
+# Convergence
+- Tolerance: 1e-4 relative error (looser than element_filtration)
+- Max iterations: 100
+- Solves for membrane surface concentration
+
+# Physical Constraints
+- Asserts positive brine velocity
+- Prevents negative fluxes
+- Limits foulant deposition to available mass
+
+# Note
+Cake layer reduces effective channel height, changing local hydraulics.
+
+# Examples
+```julia
+feed = Water2(10.0, 25.0, 35.0, 0.1, 55e5)  # 0.1 kg/m³ foulant
+element = MembraneElement2(7e-4, 37.0/50, 1.016/50, 16.0, 1.5e15, 0.0, 3.5e-8, 0.0, 0.8)
+brine, permeate, dThick, dRc = element_filtration2(feed, element; dt=3600.0)
+```
+"""
 function element_filtration2(
     feed::Water2, element::MembraneElement2; dt::Union{Float64, Nothing}=nothing
 )::Tuple{Water2, Water2, Float64, Float64}
@@ -267,10 +490,53 @@ function element_filtration2(
     return (brine, permeate, ΔCake_thickness, ΔR_c)
 end
 
-# =================================================== Definition of module / vessel filtration functions ===================================================
-# Both element_filtration and element_filtration2 algorithms are used inside dispatches of the functions.
-# If feed is Water and element is MembraneElement, element_filtration is used. If feed is Water2 and element is MembraneElement2, element_filtration2 is used.
+# ===================================================================
+# Module and Vessel Filtration (Cascaded Elements)
+# ===================================================================
+# These functions call element filtration in sequence, with brine from
+# one element becoming feed for the next (series flow arrangement)
+# ===================================================================
 
+"""
+    module_filtration(feed::Water, membrane::MembraneModule; dt::Union{Float64, Nothing}=nothing)
+
+Simulate filtration through entire membrane module (cascade of elements).
+Automatically dispatches to element_filtration based on types.
+
+# Arguments
+- `feed::Water`: Inlet water stream
+- `membrane::MembraneModule`: Membrane module containing element array
+- `dt::Union{Float64, Nothing}=nothing`: Time step for fouling integration [s]
+
+# Returns
+- Tuple of `(brines, permeates, ΔR_ms)`
+  - `brines::Array{Water}`: Brine stream from each element
+  - `permeates::Array{Water}`: Permeate stream from each element
+  - `ΔR_ms::Array{Float64}`: Resistance increase for each element
+
+# Description
+Simulates sequential filtration where:
+1. Feed enters first element
+2. Brine from element_i becomes feed for element_(i+1)
+3. Permeates collected separately from each element
+4. Final brine = brines[end]
+
+# Type Compatibility
+- Requires Water feed with MembraneElement array
+- Type mismatch triggers assertion error
+
+# Note
+Arrays length = membrane.n_segments
+Useful for analyzing spatial profiles along module length
+
+# Examples
+```julia
+feed = Water(10.0, 25.0, 35.0, 55e5)
+membrane = pristine_membrane(50, 1.016, 7e-4, 37.0, 6.8e10, 0.67e9, 16.0, 0.995)
+brines, permeates, dRs = module_filtration(feed, membrane; dt=3600.0)
+# brines has 50 elements, one per membrane segment
+```
+"""
 function module_filtration(
     feed::Water, membrane::MembraneModule; dt::Union{Float64, Nothing}=nothing
 )::Tuple{Array{Water}, Array{Water}, Array{Float64}}
@@ -299,6 +565,19 @@ function module_filtration(
     return brines, permeates, ΔR_ms
 end
 
+"""
+    module_filtration(feed::Water2, membrane::MembraneModule; dt::Union{Float64, Nothing}=nothing)
+
+Simulate module filtration with foulant tracking and cake layer formation.
+Uses element_filtration2 for advanced fouling dynamics.
+
+# Returns
+- Tuple of `(brines, permeates, ΔCake_thicknesses, ΔR_cs)`
+  - Returns cake thickness and resistance arrays instead of simple ΔR_m
+
+# Note
+Requires Water2 feed and MembraneElement2 array for type compatibility.
+"""
 function module_filtration(
     feed::Water2, membrane::MembraneModule; dt::Union{Float64, Nothing}=nothing
 )::Tuple{Array{Water2}, Array{Water2}, Array{Float64}, Array{Float64}}
@@ -332,6 +611,42 @@ function module_filtration(
     return brines, permeates, ΔCake_thicknesses, ΔR_cs
 end
 
+"""
+    vessel_filtration(feed::Water, vessel::PressureVessel; dt::Union{Float64, Nothing}=nothing)
+
+Simulate filtration through entire pressure vessel (multiple modules in series).
+
+# Arguments
+- `feed::Water`: Inlet water stream
+- `vessel::PressureVessel`: Pressure vessel containing module array
+- `dt::Union{Float64, Nothing}=nothing`: Time step for fouling integration [s]
+
+# Returns
+- Tuple of `(brines_array, permeates_array, ΔR_ms_array)`
+  - `brines_array::Array{Array{Water}}`: Nested array [module][element] of brines
+  - `permeates_array::Vector{Vector{Water}}`: Nested array [module][element] of permeates
+  - `ΔR_ms_array::Vector{Vector{Float64}}`: Nested array [module][element] of resistance changes
+
+# Description
+Cascades modules where brine from last element of module_i
+becomes feed for first element of module_(i+1).
+
+# Structure
+- Outer array: modules (length = n_modules)
+- Inner array: elements (length = n_segments per module)
+- Total elements simulated = sum(n_segments)
+
+# Common Usage
+```julia
+vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0, 6.8e10, 0.67e9, 16.0, 0.995)
+feed = Water(10.0, 25.0, 35.0, 55e5)
+brines, permeates, dRs = vessel_filtration(feed, vessel; dt=3600.0)
+
+# Final outputs
+final_brine = brines[end][end]  # Last element of last module
+total_permeate = mix(reduce(vcat, permeates))  # Mix all permeates
+```
+"""
 function vessel_filtration(
     feed::Water, vessel::PressureVessel; dt::Union{Float64, Nothing}=nothing
 )::Tuple{Array{Array{Water}}, Vector{Vector{Water}}, Vector{Vector{Float64}}}
@@ -356,6 +671,15 @@ function vessel_filtration(
     return brines_array, permeates_array, ΔR_ms_array
 end
 
+"""
+    vessel_filtration(feed::Water2, vessel::PressureVessel; dt::Union{Float64, Nothing}=nothing)
+
+Vessel filtration with foulant tracking and cake layer formation.
+Returns nested arrays for brines, permeates, cake thickness changes, and resistance changes.
+
+# Note
+Requires Water2 feed and MembraneElement2 array in vessel for type compatibility.
+"""
 function vessel_filtration(
     feed::Water2, vessel::PressureVessel; dt::Union{Float64, Nothing}=nothing
 )::Tuple{Array{Array{Water2}}, Array{Array{Water2}}, Vector{Vector{Float64}}, Vector{Vector{Float64}}}
