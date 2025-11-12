@@ -45,7 +45,7 @@ Advanced model for detailed fouling studies:
 
 ### Process Configurations
 - **Single-Pass RO**: Feed → Pump → Membrane → Permeate + Brine
-- **Semi-Batch RO**: Moved to [SemiBatchReverseOsmosis.jl](https://github.com/Yumbang/SemiBatchReverseOsmosis.git)
+- **Semi-Batch RO**: Moved to [SemiBatchReverseOsmosis.jl](https://github.com/Yumbang/SemiBatchReverseOsmosis.git) (NOTE: Private repository now. Will be open soon!)
 
 ## Installation
 
