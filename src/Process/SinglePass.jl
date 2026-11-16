@@ -20,7 +20,7 @@ export
 
 using DataFrames, Unitful
 
-using ...ReverseOsmosis: Water, Water2, pressurize, profile_water, mix
+using ...ReverseOsmosis: Water, Water2, pressurize, profile_water, mix, P_ATM
 
 using ...ReverseOsmosis: MembraneElement, MembraneElement2, MembraneModule, PressureVessel,
         profile_membrane, pristine_membrane, pristine_membrane2, foul!
@@ -42,7 +42,7 @@ Each call to `process_singlepass_RO!` modifies the membrane properties.
 
 # Examples
 ```julia
-vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0, 6.8e10, 0.67e9, 16.0, 0.995)
+vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0/1.016, 6.8e10, 0.67e9, 16.0, 0.995)
 process = SinglePassRO(0.8, vessel)
 
 # Simulate over time
@@ -92,7 +92,7 @@ Mutates the membrane vessel by applying fouling (if enabled).
 # Examples
 ```julia
 # Basic usage
-vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0, 6.8e10, 0.67e9, 16.0, 0.995)
+vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0/1.016, 6.8e10, 0.67e9, 16.0, 0.995)
 process = SinglePassRO(0.8, vessel)
 feed = Water(10.0, 25.0, 35.0, 1e5)
 
@@ -145,7 +145,7 @@ function process_singlepass_RO!(
     end
 
     final_brine     = brines_array[end][end]
-    final_permeate  = mix(reduce(vcat, permeates_array); pressure=1e-5)
+    final_permeate  = mix(reduce(vcat, permeates_array); pressure=P_ATM)
 
     if profile_process
         brines_profile      = vcat([profile_water(brines) for brines in brines_array]...)
@@ -180,9 +180,8 @@ function process_singlepass_RO!(
         pressure_setpoint_Pa = unpressurized_feed.P
     end
 
-    local brines_array::Array{Array{Water}}
-    local permeates_array::Array{Array{Water}}
-    local ΔR_ms_array::Array{Array{Float64}}
+    local brines_array::Array{Array{Water2}}
+    local permeates_array::Array{Array{Water2}}
     η_pump  = process.pump_efficiency
     dt_sec  = dt |> u"s" |> ustrip
 
@@ -200,7 +199,7 @@ function process_singlepass_RO!(
     end
 
     final_brine     = brines_array[end][end]
-    final_permeate  = mix(reduce(vcat, permeates_array); pressure=1e-5)
+    final_permeate  = mix(reduce(vcat, permeates_array); pressure=P_ATM)
 
     if profile_process
         brines_profile      = vcat([profile_water(brines) for brines in brines_array]...)

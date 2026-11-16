@@ -188,7 +188,7 @@ membrane = pristine_membrane(
     50,         # 50 segments
     1.016,      # 1.016 m length (40 inches)
     7e-4,       # 0.7 mm channel height
-    37.0,       # 37 m² membrane area
+    37.0/1.016,       # Channel width [m] = 37 m² membrane area / 1.016 m length
     6.8e10,     # Membrane resistance
     0.67e9,     # Fouling potential
     16.0,       # Spacer resistance
@@ -239,7 +239,7 @@ membrane = pristine_membrane2(
     50,      # 50 segments
     1.016,   # 1.016 m length
     7e-4,    # 0.7 mm channel height
-    37.0,    # 37 m² membrane area
+    37.0/1.016,    # Channel width [m] = 37 m² membrane area / 1.016 m length
     1.5e15,  # Membrane resistance [m⁻¹]
     3.5e-8,  # Salt permeability [kg/m²·s]
     0.8,     # Fouling propensity
@@ -392,7 +392,7 @@ Convenience constructor for uniform vessel configurations.
 
 # Examples
 ```julia
-module = pristine_membrane(50, 1.016, 7e-4, 37.0, 6.8e10, 0.67e9, 16.0, 0.995)
+module = pristine_membrane(50, 1.016, 7e-4, 37.0/1.016, 6.8e10, 0.67e9, 16.0, 0.995)
 vessel = PressureVessel(7, module)  # 7-element vessel
 ```
 """
@@ -483,7 +483,7 @@ Concatenates profiles from all modules in the vessel.
 
 # Examples
 ```julia
-vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0, 6.8e10, 0.67e9, 16.0, 0.995)
+vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0/1.016, 6.8e10, 0.67e9, 16.0, 0.995)
 profile = profile_vessel(vessel)  # 350 rows (7 modules × 50 segments)
 ```
 """

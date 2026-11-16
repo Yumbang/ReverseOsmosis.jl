@@ -4,7 +4,7 @@ using Printf, DataFrames, Unitful
 
 export
     # Fluid
-    Water, Water2, pressurize, profile_water, mix,
+    Water, Water2, pressurize, profile_water, mix, P_ATM,
     # Membrane
     MembraneElement, MembraneElement2, MembraneModule, PressureVessel,
     pristine_membrane, pristine_membrane2, pristine_vessel, pristine_vessel2,

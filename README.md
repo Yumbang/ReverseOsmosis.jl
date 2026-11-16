@@ -21,6 +21,7 @@ ReverseOsmosis.jl provides a comprehensive framework for simulating single-pass 
 - `Water`: Basic water streams with flow, temperature, concentration, and pressure
 - `Water2`: Extended streams with foulant particle tracking
 - Mass-weighted mixing and pressurization operations
+- Pressures are absolute [Pa]; the permeate side is at atmospheric pressure `P_ATM` (1e5 Pa), so the net driving pressure is `P - P_ATM - π`
 
 ### Membrane Hierarchy
 - **MembraneElement**: Discretized membrane segments for spatial resolution
@@ -31,13 +32,13 @@ ReverseOsmosis.jl provides a comprehensive framework for simulating single-pass 
 
 #### Model 1: Resistance Model (MembraneElement)
 Simple and fast model suitable for preliminary design:
-- Water flux: `v_w = (P - π) / R_m`
+- Water flux: `v_w = (P - P_ATM - π) / (R_m × TCF_A)` with temperature correction
 - Fixed salt rejection coefficient
 - Fouling: `ΔR_m = k_fp × v_w`
 
 #### Model 2: Solution-Diffusion with Cake Layer (MembraneElement2)
 Advanced model for detailed fouling studies:
-- Water flux: `v_w = A × (P - π)` with temperature correction
+- Water flux: `v_w = A × (P - P_ATM - π)` with temperature correction
 - Salt flux: `v_s = B × C_membrane` (solution-diffusion)
 - Cake-enhanced concentration polarization (CEMT model)
 - Critical flux-based cake deposition
@@ -73,7 +74,7 @@ vessel = pristine_vessel(
     50,         # 50 axial segments per module
     1.016,      # 1.016 m length (40 inches)
     7e-4,       # 0.7 mm channel height
-    37.0,       # 37 m² membrane area
+    37.0/1.016,       # Channel width [m] = 37 m² membrane area / 1.016 m length
     6.8e10,     # Membrane resistance [Pa·s/m]
     0.67e9,     # Fouling potential [Pa·s/m²]
     16.0,       # Spacer resistance coefficient
@@ -112,7 +113,7 @@ println("Power consumption: $(power)")
 ```julia
 using ReverseOsmosis, Unitful, DataFrames
 
-vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0, 6.8e10, 0.67e9, 16.0, 0.995)
+vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0/1.016, 6.8e10, 0.67e9, 16.0, 0.995)
 process = SinglePassRO(0.8, vessel)
 
 results = DataFrame(
@@ -154,7 +155,7 @@ using ReverseOsmosis
 
 # Use MembraneElement2 with solution-diffusion model
 vessel = pristine_vessel2(
-    7, 50, 1.016, 7e-4, 37.0,
+    7, 50, 1.016, 7e-4, 37.0/1.016,
     1.5e15,     # Membrane resistance [m⁻¹] (different units!)
     3.5e-8,     # Salt permeability [kg/m²·s]
     0.8,        # Fouling propensity
@@ -274,7 +275,7 @@ Key papers implemented in this package:
 
 1. **Critical Flux Model**: Chong, T.H., et al. (2008). "Combined effect of membrane fouling and concentration polarization on flux behavior in crossflow nanofiltration." *Journal of Membrane Science*, 314(1-2), 89-95. [DOI:10.1016/j.memsci.2008.01.030](https://doi.org/10.1016/j.memsci.2008.01.030)
 
-2. **Cake-Enhanced Mass Transfer**: Jiang, S., et al. (2021). "A comprehensive CFD-based model for the prediction of fouling development in a spiral-wound reverse osmosis membrane." *Desalination*, 510, 115289. [DOI:10.1016/j.desal.2021.115289](https://doi.org/10.1016/j.desal.2021.115289)
+2. **Cake-Enhanced Mass Transfer**: Jeong, K., et al. (2021). "Modeling and evaluating performance of full-scale reverse osmosis system in industrial water treatment plant." *Desalination*, 518, 115289. [DOI:10.1016/j.desal.2021.115289](https://doi.org/10.1016/j.desal.2021.115289)
 
 3. **Solution-Diffusion Theory**: See standard membrane transport references (Geankoplis, Baker & Wijmans, etc.)
 

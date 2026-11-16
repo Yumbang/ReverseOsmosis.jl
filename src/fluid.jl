@@ -1,4 +1,17 @@
 # ===================================================================
+# Reference pressure
+# ===================================================================
+
+"""
+    P_ATM
+
+Atmospheric pressure [Pa]. All `Water.P` values are absolute pressures, and the
+permeate side of every membrane is assumed to be at `P_ATM`. The net driving
+pressure is therefore `P_feed - P_ATM - π`.
+"""
+const P_ATM = 1e5
+
+# ===================================================================
 # Water Stream Representations
 # ===================================================================
 
@@ -168,7 +181,7 @@ pressurized = pressurize(feed, 50e5)  # Add 50 bar
 ```
 """
 function pressurize(water::Water, pressure_to_apply::Float64)
-    return Water(water.Q, water.T, water.C, water.P + pressure_to_apply)
+    return Water(water.Q, water.T, water.C, water.P + pressure_to_apply, water.m_avg)
 end
 
 """
@@ -177,7 +190,7 @@ end
 Pressurize Water2 stream (includes foulant concentration).
 """
 function pressurize(water::Water2, pressure_to_apply::Float64)
-    return Water2(water.Q, water.T, water.C, water.Cf, water.P + pressure_to_apply)
+    return Water2(water.Q, water.T, water.C, water.Cf, water.P + pressure_to_apply, water.m_avg)
 end
 
 # ===================================================================

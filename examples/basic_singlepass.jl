@@ -22,7 +22,7 @@ vessel = pristine_vessel(
     50,         # 50 axial segments per module (for spatial resolution)
     1.016,      # 1.016 m = 40 inches (standard module length)
     7e-4,       # 0.7 mm channel height
-    37.0,       # 37 m² membrane area per module
+    37.0/1.016,       # Channel width [m] = 37 m² membrane area / 1.016 m length
     6.8e10,     # Membrane resistance [Pa·s/m]
     0.67e9,     # Fouling potential coefficient [Pa·s/m²]
     16.0,       # Spacer resistance coefficient

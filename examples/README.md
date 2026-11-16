@@ -81,7 +81,7 @@ using DataFrames
 using Plots
 
 # Initialize system
-vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0, 6.8e10, 0.67e9, 16.0, 0.995)
+vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0/1.016, 6.8e10, 0.67e9, 16.0, 0.995)
 process = SinglePassRO(0.8, vessel)
 
 # Storage for results

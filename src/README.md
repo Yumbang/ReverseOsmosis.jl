@@ -74,7 +74,7 @@ Core filtration algorithms and physics models.
 
 **Models Implemented:**
 1. **Resistance Model** (element_filtration):
-   - v_w = (P - π) / R_m
+   - v_w = (P - P_ATM - π) / (R_m × TCF_A)
    - Fixed salt rejection coefficient
    - Simple fouling: ΔR_m = k_fp × v_w
 
@@ -201,4 +201,4 @@ Currently no formal test suite. Examples in `../examples/` serve as integration 
 
 Key scientific papers implemented:
 - Chong et al. (2008), J. Membrane Sci. 314:89-95 - Critical flux model
-- Jiang et al. (2021), Desalination 510:115289 - Cake-enhanced mass transfer
+- Jeong et al. (2021), Desalination 518:115289 - Cake-enhanced mass transfer

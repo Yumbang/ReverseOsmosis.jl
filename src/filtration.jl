@@ -31,7 +31,7 @@ export
     element_filtration, element_filtration2, module_filtration, vessel_filtration
 
 using Unitful
-using ..ReverseOsmosis: Water, Water2, pressurize, profile_water, mix
+using ..ReverseOsmosis: Water, Water2, pressurize, profile_water, mix, P_ATM
 using ..ReverseOsmosis: MembraneElement, MembraneElement2, MembraneModule, PressureVessel, profile_membrane, pristine_membrane
 
 # ===================================================================
@@ -190,7 +190,7 @@ Key equations:
 - 1/k_CEMT = δ(1/D_c - 1/D_b) + 1/k (series resistances)
 
 # Reference
-Jiang et al. (2021), Desalination 510:115289
+Jeong et al. (2021), Desalination 518:115289
 https://doi.org/10.1016/j.desal.2021.115289
 """
 function k_CEMT(u, H, W, μ, ρ, ϵ, δ)
@@ -235,7 +235,8 @@ Uses resistance model with fixed salt rejection coefficient.
 
 # Model Description
 Iteratively solves for brine concentration considering:
-1. **Water flux**: v_w = (P - π) / R_m (resistance model)
+1. **Water flux**: v_w = (P - P_ATM - π) / (R_m × TCF_A) (resistance model;
+   TCF_A = exp(4140(1/T - 1/293.15)), permeate side at atmospheric pressure `P_ATM`)
 2. **Salt transport**: Based on rejection coefficient
 3. **Pressure drop**: Hagen-Poiseuille flow through spacer
 4. **Concentration polarization**: Iterative mass balance
@@ -257,7 +258,7 @@ Temperature-dependent viscosity: Vogel equation
 # Examples
 ```julia
 feed = Water(10.0, 25.0, 35.0, 55e5)
-element = MembraneElement(7e-4, 37.0/50, 1.016/50, 16.0, 6.8e10, 0.67e9, 0.995)
+element = MembraneElement(7e-4, 37.0/1.016, 1.016/50, 16.0, 6.8e10, 0.67e9, 0.995)
 brine, permeate, dR = element_filtration(feed, element; dt=3600.0)
 ```
 """
@@ -276,6 +277,10 @@ function element_filtration(
     k_fp   = element.k_fp                   # Fouling potential coefficient
     reject = element.salt_rejection         # Membrane salt rejection rate
     μ      = 2.414e-5 * 10^(247.8 / (T_feed + 273.15 - 140)) # Water viscosity coefficient
+    # Temperature correction for water permeability (reference 20 °C). a_T is positive, so TCF_A < 1
+    # above 20 °C and the flux is DIVIDED by it (equivalent to multiplying by Jeong et al.'s TCF_A
+    # with a_T = -4140).
+    TCF_A  = exp(4140.0 * (1/(T_feed + 273.15) - 1/293.15))
     
     local err         ::Float64 = 1.0
     local idx_iter    ::Int64   = 0
@@ -288,7 +293,7 @@ function element_filtration(
     while err > 1e-6
         c_guess = c_cal
         osmo_p_guess = osmo_p(c_guess, T_feed, M_feed)
-        v_w_guess    = max(P_feed - osmo_p_guess, 0.0) / element.R_m
+        v_w_guess    = max(P_feed - P_ATM - osmo_p_guess, 0.0) / element.R_m / TCF_A
         u_guess      = U_feed - v_w_guess * element.dx / element.height
         c_cal        = ((C_feed * U_feed * element.height) - ((1-reject)*C_feed) * (v_w_guess * element.dx)) / (u_guess * element.height)
         err          = abs((c_cal - c_guess) / c_cal)
@@ -306,7 +311,7 @@ function element_filtration(
     Q_b = Q_feed - Q_p                                  # Brine flowrate    [m³/h]
     C_p = (1-reject)*C_feed
     C_b = c_cal
-    P_p = 1e-10
+    P_p = P_ATM
     P_b = P_feed - ((12 * K * μ * u_guess * element.dx) / element.height^2)
 
     # If dt isn't given, return ΔR_m which is d(R_m)/dt.
@@ -343,7 +348,7 @@ Tracks foulant concentration and cake layer formation.
 
 # Model Description
 **Solution-Diffusion Model:**
-- Water flux: v_w = A × (P - π) where A = 1/(R_m + R_c)/μ
+- Water flux: v_w = A × (P - P_ATM - π) where A = 1/(R_m + R_c)/μ
 - Salt flux: v_s = B × C_membrane
 
 **Concentration Polarization:**
@@ -383,7 +388,7 @@ Cake layer reduces effective channel height, changing local hydraulics.
 # Examples
 ```julia
 feed = Water2(10.0, 25.0, 35.0, 0.1, 55e5)  # 0.1 kg/m³ foulant
-element = MembraneElement2(7e-4, 37.0/50, 1.016/50, 16.0, 1.5e15, 0.0, 3.5e-8, 0.0, 0.8)
+element = MembraneElement2(7e-4, 37.0/1.016, 1.016/50, 16.0, 1.5e15, 0.0, 3.5e-8, 0.0, 0.8)
 brine, permeate, dThick, dRc = element_filtration2(feed, element; dt=3600.0)
 ```
 """
@@ -438,7 +443,7 @@ function element_filtration2(
     while err > 1e-4
         cm_guess     = cm_cal
         osmo_p_guess = osmo_p(cm_guess, T_feed, M_feed)
-        v_w_guess    = max(P_feed - osmo_p_guess, 1e-10) * A_corr
+        v_w_guess    = max(P_feed - P_ATM - osmo_p_guess, 1e-10) * A_corr
         v_s_guess    = B_corr * cm_guess
         u_guess      = U_feed - v_w_guess * element.dx / local_height
         c_guess      = (U_feed * C_feed * local_height - v_s_guess * element.dx) / local_height / u_guess
@@ -456,7 +461,7 @@ function element_filtration2(
 
     m_fc_in  = Cf_feed * U_feed * local_height                           # Foulant mass inflow (kg/m⋅s)
     m_fc_acc = min(
-        k_fp * cake_mass(v_w_guess, u_guess, cm_cal) * element.dx,
+        k_fp * cake_mass(v_w_guess, u_guess, Cf_feed) * element.dx,
         m_fc_in
         )                                                                # Foulant mass deposition rate (kg/m⋅s)
     m_fc_out = m_fc_in - m_fc_acc                                        # Foulant mass outflow (kg/m⋅s)
@@ -469,7 +474,7 @@ function element_filtration2(
     C_p  = cp_guess
     C_b  = c_guess
     # C_b  = cm_guess
-    P_p  = 1e5                                             # Atmospheric pressure
+    P_p  = P_ATM                                           # Atmospheric pressure
     P_b  = P_feed - ((12 * K * μ * u_guess * element.dx) / local_height^2)
     Cf_p = 0.0                                             # Assume complete filtration of foulant (which is likely!)
     Cf_b = cf_guess
@@ -478,10 +483,10 @@ function element_filtration2(
     # If dt is given, return ΔR_m which is actual increase of membrane resistance.
     if isnothing(dt)
         ΔCake_thickness = m_fc_acc / ρₚ / (1 - ϵₚ) / element.dx                   # Cake thickness increase rate (m/s)
-        ΔR_c            = 180.0 * (1 - ϵₚ) / ρₚ / dₚ^2 / ϵₚ^3 * m_fc_acc           # Cake layer resistance increase rate (Carman-Kozeny equation in Darcy's law)
+        ΔR_c            = 180.0 * (1 - ϵₚ) / ρₚ / dₚ^2 / ϵₚ^3 * m_fc_acc / element.dx      # Cake layer resistance increase rate (Carman-Kozeny equation in Darcy's law)
     else
         ΔCake_thickness = m_fc_acc / ρₚ / (1 - ϵₚ) / element.dx * dt              # Cake thickness increase (m)
-        ΔR_c            = 180.0 * (1 - ϵₚ) / ρₚ / dₚ^2 / ϵₚ^3 * m_fc_acc * dt      # Cake layer resistance increase (Carman-Kozeny equation in Darcy's law)
+        ΔR_c            = 180.0 * (1 - ϵₚ) / ρₚ / dₚ^2 / ϵₚ^3 * m_fc_acc / element.dx * dt # Cake layer resistance increase (Carman-Kozeny equation in Darcy's law)
     end
 
     permeate = Water2(Q_p, T_feed, C_p, Cf_p, P_p)
@@ -532,7 +537,7 @@ Useful for analyzing spatial profiles along module length
 # Examples
 ```julia
 feed = Water(10.0, 25.0, 35.0, 55e5)
-membrane = pristine_membrane(50, 1.016, 7e-4, 37.0, 6.8e10, 0.67e9, 16.0, 0.995)
+membrane = pristine_membrane(50, 1.016, 7e-4, 37.0/1.016, 6.8e10, 0.67e9, 16.0, 0.995)
 brines, permeates, dRs = module_filtration(feed, membrane; dt=3600.0)
 # brines has 50 elements, one per membrane segment
 ```
@@ -638,7 +643,7 @@ becomes feed for first element of module_(i+1).
 
 # Common Usage
 ```julia
-vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0, 6.8e10, 0.67e9, 16.0, 0.995)
+vessel = pristine_vessel(7, 50, 1.016, 7e-4, 37.0/1.016, 6.8e10, 0.67e9, 16.0, 0.995)
 feed = Water(10.0, 25.0, 35.0, 55e5)
 brines, permeates, dRs = vessel_filtration(feed, vessel; dt=3600.0)
 
