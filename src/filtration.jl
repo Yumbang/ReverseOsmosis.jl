@@ -298,7 +298,7 @@ function element_filtration(
         c_cal        = ((C_feed * U_feed * element.height) - ((1-reject)*C_feed) * (v_w_guess * element.dx)) / (u_guess * element.height)
         err          = abs((c_cal - c_guess) / c_cal)
         idx_iter     += 1
-        if idx_iter ≥ 100
+        if (idx_iter ≥ 100) && (err > 1e-6)
             @assert false "\nFailed to converge. Iteration exceeded 100 times. Feed water: $(feed) osmo_p_guess: $(osmo_p_guess) v_w_guess: $(v_w_guess)"
         end
     end
@@ -444,20 +444,23 @@ function element_filtration2(
         cm_guess     = cm_cal
         osmo_p_guess = osmo_p(cm_guess, T_feed, M_feed)
         v_w_guess    = max(P_feed - P_ATM - osmo_p_guess, 1e-10) * A_corr
-        v_s_guess    = B_corr * cm_guess
+        # Solution-diffusion with transmembrane concentration difference (Jeong et al., 2021, Eq. 2):
+        # v_s = B (c_m - c_p) and c_p = v_s / v_w  ⇒  c_p = B c_m / (v_w + B), v_s = v_w c_p.
+        # This keeps c_p ≤ c_m even when the water flux vanishes.
+        cp_guess     = B_corr * cm_guess / (v_w_guess + B_corr)
+        v_s_guess    = v_w_guess * cp_guess
         u_guess      = U_feed - v_w_guess * element.dx / local_height
         c_guess      = (U_feed * C_feed * local_height - v_s_guess * element.dx) / local_height / u_guess
         k_mt         = k_CEMT(u_guess, local_height, element.width, μ, ρ, ϵₚ, element.cake_thickness)
         cm_cal       = c_guess * exp(v_w_guess / k_mt)
         err          = abs((cm_cal - cm_guess) / cm_cal)
         idx_iter     += 1
-        if idx_iter ≥ 100
+        if (idx_iter ≥ 100) && (err > 1e-4)
             @assert false "\nFailed to converge. Iteration exceeded 100 times. Feed water: $(feed) | err: $(err)"
         end
     end
     
     @assert (u_guess > 0.0) "Brine flux is negative (u_guess: $(u_guess)). Backward flow isn't supported."
-    cp_guess = v_s_guess / v_w_guess
 
     m_fc_in  = Cf_feed * U_feed * local_height                           # Foulant mass inflow (kg/m⋅s)
     m_fc_acc = min(

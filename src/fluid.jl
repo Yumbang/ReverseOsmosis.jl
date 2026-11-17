@@ -83,6 +83,18 @@ end
 # Stream Mixing Operations
 # ===================================================================
 
+# Mole-weighted average ion mass of a mixture. Salt-free streams carry no ions,
+# so fall back to the flow-weighted value instead of 0/0.
+function _mixed_m_avg(water1::Union{Water, Water2}, water2::Union{Water, Water2})
+    salt  = water1.C * water1.Q + water2.C * water2.Q
+    moles = water1.C * water1.Q / water1.m_avg + water2.C * water2.Q / water2.m_avg
+    if salt > 0.0
+        return salt / moles
+    end
+    flow = water1.Q + water2.Q
+    return flow > 0.0 ? (water1.m_avg * water1.Q + water2.m_avg * water2.Q) / flow : water1.m_avg
+end
+
 """
     mix(water1::Water, water2::Water; pressure::Float64=1e5)
 
@@ -115,7 +127,7 @@ function mix(water1::Water, water2::Water; pressure::Float64=1e5)
     flow            = water1.Q + water2.Q
     temperature     = (water1.T * water1.Q + water2.T * water2.Q) / flow
     concentration   = (water1.C * water1.Q + water2.C * water2.Q) / flow
-    m_avg           = (water1.C * water1.Q + water2.C * water2.Q) / (water1.C * water1.Q / water1.m_avg + water2.C * water2.Q / water2.m_avg)
+    m_avg           = _mixed_m_avg(water1, water2)
     return Water(flow, temperature, concentration, pressure, m_avg)
 end
 
@@ -132,7 +144,7 @@ function mix(water1::Water2, water2::Water2; pressure::Float64=1e5)
     temperature     = (water1.T * water1.Q + water2.T * water2.Q)   / flow
     concentration   = (water1.C * water1.Q + water2.C * water2.Q)   / flow
     Cf              = (water1.Cf * water1.Q + water2.Cf * water2.Q) / flow
-    m_avg           = (water1.C * water1.Q + water2.C * water2.Q)   / (water1.C * water1.Q / water1.m_avg + water2.C * water2.Q / water2.m_avg)
+    m_avg           = _mixed_m_avg(water1, water2)
     return Water2(flow, temperature, concentration, Cf, pressure, m_avg)
 end
 
